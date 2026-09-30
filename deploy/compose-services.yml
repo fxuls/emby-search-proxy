@@ -1,0 +1,42 @@
+# Canonical copy of the services added to ~/docker/emby/docker-compose.yml.
+# The live compose file is the source of truth for what's running; keep this
+# in sync when changing either (see docs/runbook.md).
+#
+# Also required in the emby service: remove "8096:8096" from its ports
+# (nginx owns host port 8096; Emby is reachable only on the compose network).
+
+  searchfix:
+    build: /home/mc/homelab/emby-search-proxy/searchfix
+    image: emby-searchfix:local
+    container_name: emby-searchfix
+    environment:
+      - EMBY_UPSTREAM=http://emby:8096
+      - CANDIDATE_POOL=150
+      - TZ=America/Denver
+    networks:
+      default:
+        aliases: [searchfix]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+  emby-proxy:
+    image: nginx:1.31-alpine
+    container_name: emby-proxy
+    ports:
+      - 8096:8096
+    volumes:
+      - /home/mc/homelab/emby-search-proxy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - emby
+      - searchfix
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8096/emby/System/Ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
