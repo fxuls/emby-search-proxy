@@ -69,6 +69,7 @@ better order.
 | `deploy/compose-services.yml` | The services as added to `~/docker/emby/docker-compose.yml` |
 | `tests/` | Unit tests (ranking) and in-process server tests against a fake Emby |
 | `scripts/smoke.py` | Live check against a running proxy (pass-through + search) |
+| `scripts/cutover.sh` | Put the proxy in front of Emby / take it out (dry run by default, auto-rollback) |
 | `docs/design.md` | Why a proxy, ranking rules, alternatives considered |
 | `docs/runbook.md` | Deploy, cutover, rollback, tuning, troubleshooting |
 

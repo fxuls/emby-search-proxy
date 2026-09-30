@@ -33,21 +33,25 @@ Emby → Settings → API Keys). Never commit it.
 4. Verify: `EMBY_API_KEY=<key> scripts/smoke.py` (defaults to :8096).
 5. If the compose services changed, update `deploy/compose-services.yml` to match.
 
-## Initial cutover (done 2026-09-30, kept for reference)
+## Cutover / rollback
 
-1. Check nobody is streaming:
-   `curl -s "http://localhost:8096/emby/Sessions?api_key=<key>"`, looking for `NowPlayingItem`.
-2. `cp ~/docker/emby/docker-compose.yml ~/docker/emby/docker-compose.yml.pre-searchproxy.bak`
-3. In the `emby` service, delete the `- 8096:8096` port line. Append the two
-   services from `deploy/compose-services.yml`.
-4. `cd ~/docker/emby && docker compose build searchfix && docker compose up -d`.
-   Emby is recreated because its ports changed, which interrupts it for about 30–60 s.
-5. Set Emby → Settings → Network → *Read proxy headers to determine client IP
-   addresses* = **Yes** (`ProxyHeaderMode=AllAddresses`).
-6. `scripts/smoke.py`, then check the remote path through the relay:
-   `docker run --rm --network container:<vpn-container> curlimages/curl -s http://localhost:<relay-port>/emby/System/Info/Public`
+Scripted in `scripts/cutover.sh`. It works from the staged file
+`~/docker/emby/docker-compose.searchproxy.yml` and the backup
+`~/docker/emby/docker-compose.yml.pre-searchproxy.bak`.
 
-## Rollback (≈1 minute of Emby downtime)
+```bash
+EMBY_API_KEY=<key> scripts/cutover.sh              # dry run: validates everything, shows who is playing
+EMBY_API_KEY=<key> scripts/cutover.sh --apply      # refuses during playback unless --force
+EMBY_API_KEY=<key> scripts/cutover.sh --rollback
+```
+
+`--apply` does the following, and restores the backup automatically if any step fails:
+1. Installs the staged compose file (emby loses its `8096:8096` mapping; adds searchfix + emby-proxy).
+2. Runs `docker compose build searchfix && docker compose up -d`. Emby is recreated, a ~30–60 s interruption.
+3. Waits for :8096, then sets Emby `ProxyHeaderMode=AllAddresses` via the API.
+4. Runs `scripts/smoke.py`, then checks the remote path: <vpn-container> → socat :<relay-port> → :8096.
+
+## Manual rollback (if the script itself can't run; ≈1 minute of Emby downtime)
 
 ```bash
 cd ~/docker/emby
@@ -55,7 +59,8 @@ cp docker-compose.yml docker-compose.yml.with-searchproxy.bak
 cp docker-compose.yml.pre-searchproxy.bak docker-compose.yml
 docker compose up -d --remove-orphans     # emby gets :8096 back; proxy containers removed
 ```
-Then set *Read proxy headers* back to **No**. Nothing else depends on the proxy.
+Then set Emby → Settings → Network → *Read proxy headers* back to **No**.
+Nothing else depends on the proxy.
 
 Emergency: if nginx is wedged and you can't think, `docker restart emby-proxy`.
 
