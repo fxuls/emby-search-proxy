@@ -27,7 +27,7 @@ Samsung, LG, Xbox and the browser. The apps need no change.
 
 | Search | Emby alone | With searchfix |
 |---|---|---|
-| "La La" | rows: Studio, Tag, Person, Series, Episode, **Movie** | rows: **Movie**, Series, Episode, … Tag last |
+| "La La" | rows: Studio, Tag, Person, Series, Episode, **Movie** | rows: Series, **Movie**, Studio, Person, Episode, Tag |
 | "The Office" | #1 is the *tag* "office" | #1 The Office (US), #2 Office Space |
 | "harry" | Dirty Harry, then 7 actors named Harry | the Harry Potter films |
 | "Inter" | Interstellar, then 4 tags | Interstellar, The Interview, The Intern, … |
@@ -35,8 +35,8 @@ Samsung, LG, Xbox and the browser. The apps need no change.
 Two things are re-ordered:
 
 1. **The rows on the search page.** Apps draw one row per type in whatever order
-   Emby's `/ItemTypes` returns, and that order is arbitrary. Rows now go Movies,
-   Shows, Collections, Episodes, … People, Genres, Studios, Tags.
+   Emby's `/ItemTypes` returns, and that order is arbitrary. Rows now go TV shows,
+   Movies, Collections, Genres, Studios, People, Episodes, Live TV, Tags.
 2. **The results inside a list** (the "Top Results" row, the quick search in the
    side menu, each type row). An exact title match beats a match on the start
    of the title, which beats a match at the start of a later word, which beats

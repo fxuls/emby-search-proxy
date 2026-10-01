@@ -79,6 +79,22 @@ class Rerank(unittest.TestCase):
         emby = [{"Type": "SomethingNew"}, {"Name": "No type"}, it("Movie", "Match")]
         self.assertEqual(rank.rerank(emby, "match")[0]["Name"], "Match")
 
+    def test_top_results_lean_like_rows(self):
+        # equal match quality: show > movie > collection > studio > person > episode > tag
+        emby = [it("Tag", "harry"), it("Episode", "Harry"), it("Person", "Harry"),
+                it("Studio", "Harry"), it("BoxSet", "Harry"), it("Movie", "Harry"),
+                it("Series", "Harry")]
+        self.assertEqual([i["Type"] for i in rank.rerank(emby, "harry")],
+                         ["Series", "Movie", "BoxSet", "Studio", "Person", "Episode", "Tag"])
+
+    def test_better_title_match_beats_type_order(self):
+        # exact movie title beats a show that only starts with the words
+        emby = [it("Series", "Fargo Stories"), it("Movie", "Fargo")]
+        self.assertEqual(rank.rerank(emby, "fargo")[0]["Type"], "Movie")
+        # and a show starting with the query beats a studio exactly named it
+        emby = [it("Studio", "Harry"), it("Series", "Harry Wild")]
+        self.assertEqual(rank.rerank(emby, "harry")[0]["Type"], "Series")
+
     def test_empty(self):
         self.assertEqual(rank.rerank([], "x"), [])
 
@@ -87,7 +103,15 @@ class OrderTypes(unittest.TestCase):
     def test_la_la_rows(self):
         emby = [{"Name": n} for n in ["Studio", "Tag", "Person", "Series", "Episode", "Movie"]]
         self.assertEqual([t["Name"] for t in rank.order_types(emby)],
-                         ["Movie", "Series", "Episode", "Person", "Studio", "Tag"])
+                         ["Series", "Movie", "Studio", "Person", "Episode", "Tag"])
+
+    def test_user_chosen_row_order(self):
+        # 2026-09-30: TV shows, Movies, Collections, Genres, Studios, People,
+        # Episodes, Live TV, Tags
+        want = ["Series", "Movie", "BoxSet", "Genre", "Studio", "Person",
+                "Episode", "Program", "TvChannel", "Tag"]
+        emby = [{"Name": n} for n in reversed(want)]
+        self.assertEqual([t["Name"] for t in rank.order_types(emby)], want)
 
     def test_unknown_types_last_and_stable(self):
         emby = [{"Name": "Zzz"}, {"Name": "Tag"}, {"Name": "Aaa"}, {"Name": "Movie"}]

@@ -15,6 +15,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "searchfix"))
+import rank  # noqa: E402  (the row order the live service should be using)
+
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8096").rstrip("/")
 KEY = os.environ.get("EMBY_API_KEY")
 if not KEY:
@@ -74,7 +77,8 @@ check("websocket upgrade", " 101 " in line + " ", line)
 # --- search -----------------------------------------------------------------
 s, h, b = get("/ItemTypes", {"userId": uid, "SearchTerm": "La La", "Recursive": "true"})
 rows = [t["Name"] for t in json.loads(b)["Items"]]
-check("row order re-ranked", h.get("X-Searchfix") == "types" and rows[:1] == ["Movie"], ", ".join(rows))
+check("row order re-ranked", h.get("X-Searchfix") == "types"
+      and rows == [t["Name"] for t in rank.order_types([{"Name": r} for r in rows])], ", ".join(rows))
 
 s, h, b = get(f"/Users/{uid}/Items", {"SearchTerm": "harry", "Recursive": "true", "Limit": "16",
                                       "GroupProgramsBySeries": "true"})

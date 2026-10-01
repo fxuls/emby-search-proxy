@@ -49,24 +49,30 @@ Extra penalties: +3 when matching `OriginalTitle`/`SortName` instead of `Name`;
 +5 when matching only after dropping the query's own leading article (so
 "The Office" prefers "The Office (US)" to "Office Space").
 
-Type penalty:
+Type penalty (row order and penalties chosen by the user, 2026-09-30):
 
 | Types | Penalty |
 |---|---|
-| Movie, Series | 0 |
+| Series | 0 |
+| Movie | 1 |
 | BoxSet (collections) | 3 |
-| Trailer, music, Book, Playlist | 5 |
-| Episode, Person, TvChannel, Program (and unknown types) | 12 |
-| Genre, Studio, Tag | 25 |
+| Trailer, music, Book, Playlist (none in library yet) | 5 |
+| Genre | 14 |
+| Studio | 15 |
+| Person | 16 |
+| Episode | 18 |
+| Program, TvChannel (Live TV), unknown types | 20 |
+| Tag | 25 |
 
-So a person whose name exactly matches (0+12) still beats a movie that only
-matched through its cast list (40+0), and "tom hanks" still finds Tom Hanks
-first. But a partial tag match (e.g. tag "internship" at 10+25) never beats a
-title match.
+Tiers are 10 apart, so among shows, movies and collections (spread 0–3) a
+better title match always wins. People, studios and episodes only beat media
+when they match clearly better. Example: "tom hanks" finds the person (0+16)
+before a movie matched via its cast (40+1). Example: "fox" puts the studio FOX
+(exact, 0+15) before *Fantastic Mr. Fox* (later word, 20+1).
 
-Row order (`TYPE_ORDER`): Movie, Series, BoxSet, Episode, Trailer, music
-types, Book, Playlist, TvChannel, Program, Person, Genre…, Studio, Tag, then
-anything unknown.
+Row order (`TYPE_ORDER`): TV shows, Movies, Collections, Genres, Studios,
+People, Episodes, Live TV programs, Live TV channels, (music/books/other media
+when they exist), Tags, then anything unknown.
 
 ### Candidate pool
 

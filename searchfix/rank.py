@@ -10,24 +10,37 @@ Emby's original order.
 import re
 import unicodedata
 
-# Row order on the search page. Anything not listed goes after these.
+# Row order on the search page, as chosen by the user 2026-09-30:
+# TV shows, Movies, Collections, Genres, Studios, People, Episodes, Live TV,
+# Tags. Media types not in the library yet (music, books, ...) sit between
+# Live TV and Tags until someone decides otherwise; unknown types go last.
 TYPE_ORDER = [
-    "Movie", "Series", "BoxSet", "Episode", "Trailer",
-    "MusicArtist", "MusicAlbum", "Audio", "MusicVideo", "Book", "Playlist",
-    "TvChannel", "Program", "Person",
-    "Genre", "MusicGenre", "GameGenre", "Studio", "Tag",
+    "Series", "Movie", "BoxSet",
+    "Genre", "MusicGenre", "GameGenre", "Studio",
+    "Person",
+    "Episode",
+    "Program", "TvChannel",
+    "Trailer", "MusicArtist", "MusicAlbum", "Audio", "MusicVideo", "Book", "Playlist",
+    "Tag",
 ]
 
-# Added to the match tier. Movies and shows win; tags and studios sink.
+# Added to the match tier (tiers are 10 apart). Same order as the rows, but
+# match quality dominates: within the main media types (spread 0-5) a better
+# title match always wins; people/studios/episodes only beat media when they
+# match clearly better (e.g. an exact person name vs a movie found via cast).
 TYPE_PENALTY = {
-    "Movie": 0, "Series": 0,
+    "Series": 0, "Movie": 1,
     "BoxSet": 3,
     "Trailer": 5, "MusicArtist": 5, "MusicAlbum": 5, "Audio": 5,
     "MusicVideo": 5, "Book": 5, "Playlist": 5,
-    "Episode": 12, "Person": 12, "TvChannel": 12, "Program": 12,
-    "Genre": 25, "MusicGenre": 25, "GameGenre": 25, "Studio": 25, "Tag": 25,
+    "Genre": 14, "MusicGenre": 14, "GameGenre": 14,
+    "Studio": 15,
+    "Person": 16,
+    "Episode": 18,
+    "Program": 20, "TvChannel": 20,
+    "Tag": 25,
 }
-DEFAULT_PENALTY = 12
+DEFAULT_PENALTY = 20
 
 # Match tiers (see match_tier). NO_MATCH covers items Emby matched on some
 # field we can't see (overview, cast), so they still rank, just last.

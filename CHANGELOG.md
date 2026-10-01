@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0 — 2026-09-30
+- Row order set by the user: TV shows, Movies, Collections, Genres, Studios,
+  People, Episodes, Live TV (programs, channels), Tags. Media types not in the
+  library yet (music, books…) sit between Live TV and Tags.
+- Top Results leans the same way (show > movie > collection > genre >
+  studio > person > episode > Live TV > tag on equal matches). Title-match
+  quality still dominates: an exact movie title beats a show that merely
+  starts with the query.
+- Smoke test checks row order against `rank.py` instead of a hardcoded list.
+
 ## 1.1.0 — 2026-09-30
 - **Fix:** search rows in the web client stayed alphabetical ("harry" showed
   Dirty Harry first, Harry Potter last). The web client's row loader adds
