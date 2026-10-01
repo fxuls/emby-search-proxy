@@ -75,14 +75,25 @@ them and returns the first `Limit`. That way a strong match Emby ranked
 beyond the requested 16 can still surface. The extra cost measured on this
 library was 10–300 ms per search.
 
-## What is deliberately not rewritten
+## Sorting and paging
 
-- Requests with `SortBy`: the client chose an order (e.g. library filter-by-name).
-- Requests with `StartIndex`: paged lists. Re-ranking page 1 only would
-  duplicate or skip items across pages.
-- Other endpoints carrying `SearchTerm` (`/Persons`, `/Artists`, `/Genres`…):
-  proxied unchanged.
-- `/Search/Hints`: returns `[]` on Emby 4.10 (retired), so no client relies on it.
+- **Default name sorts are replaced by relevance.** The web client's row
+  loader (`sectionscontroller.js`) adds `SortBy=SortName&SortOrder=Ascending`
+  (episodes: `SeriesSortName,ParentIndexNumber,IndexNumber,SortName`) to
+  *every* search row. Respecting it kept rows alphabetical: "Dirty Harry"
+  before "Harry Potter" (bug found and fixed 2026-09-30, v1.1.0). These
+  default sorts (`DEFAULT_NAME_SORTS` in `server.py`) don't count as a
+  request for a specific order.
+- **Other sorts are respected.** `DateCreated`, `CommunityRating`, `Random`,
+  `ChannelNumber,SortName` (Live TV rows) and so on pass through untouched.
+- **Paging stays consistent.** For `StartIndex=s&Limit=n`, searchfix asks Emby
+  for items `0 … max(150, s+n)` in Emby's relevance order (sort/paging
+  params dropped), re-ranks them, then returns `[s : s+n]`. Every page is a
+  slice of the same ranking, so nothing is duplicated or skipped.
+- **No `Limit`** means the client wants everything. No limit is sent to Emby
+  and everything comes back re-ranked.
+- Other endpoints carrying `SearchTerm` (`/Persons`, `/Artists`, `/Genres`…)
+  are proxied unchanged. `/Search/Hints` returns `[]` on Emby 4.10 (retired).
 
 ## Failure modes
 

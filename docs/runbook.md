@@ -69,7 +69,7 @@ Emergency: if nginx is wedged and you can't think, `docker restart emby-proxy`.
 | Symptom | Check |
 |---|---|
 | Emby unreachable on :8096 | `docker ps -a --filter name=emby-proxy`; `docker logs --tail 50 emby-proxy`. If nginx is fine, check Emby itself: `docker exec emby-proxy wget -qO- http://emby:8096/emby/System/Ping` |
-| Search ordering looks like stock Emby | `docker logs --tail 20 emby-searchfix`. No lines when searching means searchfix is down (nginx is falling back) or that client doesn't use `/Items`+`/ItemTypes` search |
+| Search ordering looks like stock Emby | `docker logs --tail 20 emby-searchfix`. `skip` lines show requests it saw but didn't re-rank, and why (e.g. an explicit `sortby`). No lines at all means searchfix is down (nginx falls back to Emby) or the client doesn't search via `/Items`+`/ItemTypes` |
 | A specific result ranks badly | Reproduce: `curl "http://localhost:8096/emby/Users/<uid>/Items?api_key=<key>&SearchTerm=<q>&Recursive=true&Limit=16"`. Add the case to `tests/test_rank.py`, tune `rank.py`, deploy |
 | Remote playback errors | Not this proxy first: see gotchas.md "socat relay drops long connections". Then `docker logs emby-proxy` |
 | Dashboard shows every client at 172.x | `ProxyHeaderMode` got reset. Set *Read proxy headers* to Yes |

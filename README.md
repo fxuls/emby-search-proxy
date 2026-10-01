@@ -54,8 +54,10 @@ better order.
 - **Fails open.** If searchfix is down, nginx sends the search straight to
   Emby, so users just get Emby's normal ordering. If re-ranking hits any
   error, Emby's response is served unmodified.
-- **Leaves explicit requests alone.** Queries with `SortBy` (the client chose
-  an order) or `StartIndex` (paged lists) pass through unchanged.
+- **Respects real sort choices.** The default alphabetical sort that apps add
+  to search rows is replaced by relevance. Any other sort (date added,
+  rating, random) passes through unchanged. Paged results are slices of one
+  ranking, so scrolling never duplicates or skips items.
 - **Stateless.** No database and no config beyond environment variables. Stdlib-only Python.
 
 ## Layout

@@ -99,16 +99,48 @@ class ServerTest(unittest.TestCase):
         s, h, b = self.get("/emby/Users/u/Items?searchTerm=The%20Office&limit=1")
         self.assertEqual([i["Name"] for i in json.loads(b)["Items"]], ["The Office (US)"])
 
-    def test_sortby_left_alone(self):
-        s, h, b = self.get("/emby/Users/u/Items?SearchTerm=office&SortBy=SortName&Limit=2")
+    def upstream_query(self):
+        return dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(FakeEmby.seen[-1][0]).query))
+
+    def test_default_name_sort_is_replaced_by_relevance(self):
+        # what the web client's row loader sends for every search row (2026-09-30 bug:
+        # Movies row for "harry" stayed alphabetical, Dirty Harry before Harry Potter)
+        s, h, b = self.get("/emby/Users/u/Items?SearchTerm=The%20Office&IncludeItemTypes=Movie,Series"
+                           "&SortBy=SortName&SortOrder=Ascending&StartIndex=0&Limit=2")
+        self.assertEqual([i["Name"] for i in json.loads(b)["Items"]], ["The Office (US)", "Office Space"])
+        self.assertEqual(h.get("X-Searchfix"), "items")
+        up = self.upstream_query()
+        for k in ("SortBy", "SortOrder", "StartIndex"):
+            self.assertNotIn(k, up)
+        self.assertEqual(up["Limit"], "50")
+
+    def test_episode_default_sort_replaced(self):
+        s, h, b = self.get("/emby/Users/u/Items?SearchTerm=office&IncludeItemTypes=Episode"
+                           "&SortBy=SeriesSortName,ParentIndexNumber,IndexNumber,SortName&Limit=2")
+        self.assertEqual(h.get("X-Searchfix"), "items")
+
+    def test_explicit_sort_left_alone(self):
+        s, h, b = self.get("/emby/Users/u/Items?SearchTerm=office&SortBy=DateCreated&Limit=2")
         self.assertEqual(json.loads(b)["Items"][0]["Name"], "office")
         self.assertNotIn("X-Searchfix", h)
+        self.assertEqual(self.upstream_query()["SortBy"], "DateCreated")
 
-    def test_paged_left_alone(self):
-        s, h, b = self.get("/emby/Users/u/Items?SearchTerm=office&StartIndex=0&Limit=2")
-        self.assertEqual(json.loads(b)["Items"][0]["Name"], "office")
-        upstream = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(FakeEmby.seen[-1][0]).query))
-        self.assertEqual(upstream["Limit"], "2")
+    def test_pages_are_slices_of_one_ranking(self):
+        pages = []
+        for start in range(4):
+            s, h, b = self.get(f"/emby/Users/u/Items?SearchTerm=The%20Office&StartIndex={start}&Limit=1")
+            pages += [i["Name"] for i in json.loads(b)["Items"]]
+        self.assertEqual(pages[:2], ["The Office (US)", "Office Space"])
+        self.assertEqual(len(set(pages)), 4)  # no duplicates, nothing skipped
+
+    def test_deep_page_widens_pool(self):
+        self.get("/emby/Users/u/Items?SearchTerm=x&StartIndex=60&Limit=20")
+        self.assertEqual(self.upstream_query()["Limit"], "80")
+
+    def test_no_limit_fetches_everything(self):
+        s, h, b = self.get("/emby/Users/u/Items?SearchTerm=The%20Office")
+        self.assertNotIn("Limit", self.upstream_query())
+        self.assertEqual(len(json.loads(b)["Items"]), 4)
 
     def test_other_search_endpoints_passthrough(self):
         s, h, b = self.get("/emby/Persons?SearchTerm=tom")
@@ -166,8 +198,10 @@ class Classify(unittest.TestCase):
         self.assertEqual(c("GET", "/emby/ItemTypes/", {"searchterm": "x"}), "types")
         self.assertIsNone(c("GET", "/emby/Users/u/Items", {"searchterm": ""}))
         self.assertIsNone(c("POST", "/emby/Users/u/Items", {"searchterm": "x"}))
-        self.assertIsNone(c("GET", "/emby/Users/u/Items", {"searchterm": "x", "sortby": "SortName"}))
-        self.assertIsNone(c("GET", "/emby/Users/u/Items", {"searchterm": "x", "startindex": "0"}))
+        self.assertEqual(c("GET", "/emby/Users/u/Items", {"searchterm": "x", "sortby": "SortName"}), "items")
+        self.assertEqual(c("GET", "/emby/Users/u/Items", {"searchterm": "x", "startindex": "0"}), "items")
+        self.assertIsNone(c("GET", "/emby/Users/u/Items", {"searchterm": "x", "sortby": "DateCreated"}))
+        self.assertIsNone(c("GET", "/emby/Users/u/Items", {"searchterm": "x", "sortby": "Random"}))
         self.assertIsNone(c("GET", "/emby/Users/u/Items/123", {"searchterm": "x"}))
 
 

@@ -83,9 +83,17 @@ top = [f"{i['Type']}:{i['Name']}" for i in items[:4]]
 check("top results re-ranked", h.get("X-Searchfix") == "items" and len(items) <= 16
       and items[0]["Type"] in ("Movie", "Series", "BoxSet"), "; ".join(top))
 
+# Exactly what the web client's row loader sends for the Movies row.
+s, h, b = get(f"/Users/{uid}/Items", {"SearchTerm": "harry", "IncludeItemTypes": "Movie", "Recursive": "true",
+                                      "SortBy": "SortName", "SortOrder": "Ascending", "Limit": "16",
+                                      "EnableTotalRecordCount": "false"})
+items = json.loads(b)["Items"]
+check("Movies row (default SortName) re-ranked", h.get("X-Searchfix") == "items"
+      and items[0]["Name"].lower().startswith("harry"), "; ".join(i["Name"] for i in items[:3]))
+
 s, h, b = get(f"/Users/{uid}/Items", {"SearchTerm": "harry", "Recursive": "true", "Limit": "5",
-                                      "SortBy": "SortName"})
-check("explicit SortBy left alone", s == 200 and "X-Searchfix" not in h)
+                                      "SortBy": "DateCreated"})
+check("explicit non-name SortBy left alone", s == 200 and "X-Searchfix" not in h)
 
 print(f"\n{failures} failure(s)")
 sys.exit(1 if failures else 0)
