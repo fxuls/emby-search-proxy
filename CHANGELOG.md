@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0 — 2026-10-01
+- Repeat penalty: in mixed lists (Top Results), the 4th and later Person,
+  Episode, Tag, Studio, Genre and Live TV items each cost +2 more than the
+  previous one of their type. Series/Movie/BoxSet are exempt. "harry" no longer
+  shows 112 people before the studio and episodes (studio #128 → #23,
+  episodes #127–133 → #19–29). Single-type rows are unaffected.
+- Partial-word penalty (+2): "harry" matching "Harryhausen" or "inter"
+  matching "Interstellar" ranks just below a whole-word match at the same level.
+
 ## 1.2.0 — 2026-09-30
 - Row order set by the user: TV shows, Movies, Collections, Genres, Studios,
   People, Episodes, Live TV (programs, channels), Tags. Media types not in the

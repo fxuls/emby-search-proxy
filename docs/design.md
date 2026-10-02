@@ -74,6 +74,19 @@ Row order (`TYPE_ORDER`): TV shows, Movies, Collections, Genres, Studios,
 People, Episodes, Live TV programs, Live TV channels, (music/books/other media
 when they exist), Tags, then anything unknown.
 
+### Repeat penalty and partial words (1.3.0)
+
+- **Partial word +2.** If the query covers only part of the matching word
+  ("harry" → *Harryhausen*), the match costs 2 more than a whole-word match at
+  the same level (starts-with 10 vs 12, later word 20 vs 22).
+- **Repeat penalty.** Each type's items are queued best-first, and the list is
+  built by repeatedly taking the cheapest queue head after adding its repeat
+  penalty: `REPEAT_STEP × max(0, n − FREE_REPEATS + 1)`, where n is how many of
+  that type are already placed. With `FREE_REPEATS=3` and `REPEAT_STEP=2`, the
+  4th person costs +2, the 5th +4, and so on. Series, Movie and BoxSet are
+  exempt so a franchise stays together. A single-type list (a search row)
+  keeps its pure score order.
+
 ### Candidate pool
 
 For list queries, searchfix asks Emby for `max(Limit, 150)` items, re-ranks

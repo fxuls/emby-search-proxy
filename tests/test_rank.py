@@ -21,9 +21,20 @@ class MatchTier(unittest.TestCase):
         self.assertEqual(rank.match_tier(rank.norm("la la"), q), rank.EXACT)
         self.assertEqual(rank.match_tier(rank.norm("The Curse of La Llorona"), q), rank.ALL_WORDS)
         self.assertIsNone(rank.match_tier(rank.norm("La Haine"), rank.norm("la la land")))
-        self.assertEqual(rank.match_tier(rank.norm("Girl, Interrupted"), "inter"), rank.WORD_PREFIX)
+        self.assertEqual(rank.match_tier(rank.norm("Girl, Interrupted"), "inter"),
+                         rank.WORD_PREFIX + rank.PARTIAL_WORD_PENALTY)
         self.assertEqual(rank.match_tier(rank.norm("Winterfell"), "inter"), rank.SUBSTRING)
         self.assertEqual(rank.match_tier(rank.norm("Wars of the Stars"), "star wars"), rank.ALL_WORDS)
+
+    def test_whole_word_beats_partial_word(self):
+        P = rank.PARTIAL_WORD_PENALTY
+        self.assertEqual(rank.match_tier("harry potter", "harry"), rank.PREFIX)
+        self.assertEqual(rank.match_tier("harryhausen", "harry"), rank.PREFIX + P)
+        self.assertEqual(rank.match_tier("jackee harry", "harry"), rank.WORD_PREFIX)
+        self.assertEqual(rank.match_tier("ray harryhausen", "harry"), rank.WORD_PREFIX + P)
+        # a later whole-word occurrence counts even if an earlier one is partial
+        self.assertEqual(rank.match_tier("ray harryhausen harry", "harry"), rank.WORD_PREFIX)
+        self.assertEqual(rank.match_tier(rank.norm("Star Wars: The Clone Wars"), "star wars"), rank.PREFIX)
 
     def test_leading_article_on_name(self):
         self.assertEqual(rank.match_tier(rank.norm("The Office"), "office"), rank.EXACT)
@@ -94,6 +105,35 @@ class Rerank(unittest.TestCase):
         # and a show starting with the query beats a studio exactly named it
         emby = [it("Studio", "Harry"), it("Series", "Harry Wild")]
         self.assertEqual(rank.rerank(emby, "harry")[0]["Type"], "Series")
+
+    def test_people_dont_flood_mixed_list(self):
+        # 2026-10-01: "harry" had 112 people (all score 26) ahead of the studio
+        # and every episode
+        emby = ([it("Movie", f"Harry Potter {n}") for n in range(9)]
+                + [it("Person", f"Harry Person{n}") for n in range(40)]
+                + [it("Studio", "Bad Hat Harry Productions"),
+                   it("Episode", "Harry and Brooks"),
+                   it("Episode", "Dirty Harry")])
+        out = rank.rerank(emby, "harry")
+        self.assertTrue(all(i["Type"] == "Movie" for i in out[:9]))   # franchise stays together
+        pos = {i["Name"]: n for n, i in enumerate(out)}
+        self.assertLess(pos["Bad Hat Harry Productions"], 25)
+        self.assertLess(pos["Harry and Brooks"], 15)
+        self.assertLess(pos["Dirty Harry"], 30)
+        self.assertEqual(len(out), len(emby))
+
+    def test_media_types_exempt_from_repeat_penalty(self):
+        emby = [it("Movie", f"Star Wars {n}") for n in range(12)] + [it("Person", "Star Wars Fan")]
+        self.assertEqual(rank.rerank(emby, "star wars")[-1]["Type"], "Person")
+
+    def test_single_type_row_order_is_pure_score(self):
+        people = [it("Person", n) for n in ["Ray Harryhausen", "Harry B", "Jackee Harry", "Harry A", "Harryette"]]
+        out = names(rank.rerank(people, "harry"))
+        self.assertEqual(out, ["Harry B", "Harry A", "Harryette", "Jackee Harry", "Ray Harryhausen"])
+
+    def test_rerank_is_deterministic(self):
+        emby = [it("Person", f"Harry {n}") for n in range(30)] + [it("Episode", f"Harry ep {n}") for n in range(30)]
+        self.assertEqual(names(rank.rerank(emby, "harry")), names(rank.rerank(list(emby), "harry")))
 
     def test_empty(self):
         self.assertEqual(rank.rerank([], "x"), [])

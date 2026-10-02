@@ -5,8 +5,11 @@ Two jobs:
   * rerank():      the order of the items inside a result list.
 
 An item's score is match tier + type penalty; lower ranks higher. Ties keep
-Emby's original order.
+Emby's original order. On top of that, rerank() adds a growing repeat penalty
+for "secondary" types (people, episodes, tags...) so one type can't flood the
+mixed Top Results list.
 """
+import heapq
 import re
 import unicodedata
 
@@ -46,6 +49,21 @@ DEFAULT_PENALTY = 20
 # field we can't see (overview, cast), so they still rank, just last.
 EXACT, PREFIX, WORD_PREFIX, SUBSTRING, ALL_WORDS, NO_MATCH = 0, 10, 20, 30, 35, 40
 
+# The query covering only part of a word ("harry" in "Harryhausen", "inter"
+# in "Interstellar") is slightly weaker than covering whole words.
+PARTIAL_WORD_PENALTY = 2
+
+# Repeat penalty: the first FREE_REPEATS items of each of these types are
+# free; every further item of that type costs REPEAT_STEP more than the one
+# before. Main media types are exempt so a franchise stays together. Within a
+# single-type list (a search row) this never changes the order.
+REPEAT_STEP = {
+    "Person": 2, "Episode": 2, "Tag": 2, "Studio": 2,
+    "Genre": 2, "MusicGenre": 2, "GameGenre": 2,
+    "Program": 2, "TvChannel": 2,
+}
+FREE_REPEATS = 3
+
 # Matching on OriginalTitle/SortName, or on the query without its leading
 # article, is slightly weaker evidence than matching the display name.
 ALT_FIELD_PENALTY = 3
@@ -62,6 +80,12 @@ def norm(s):
     return " ".join(s.split())
 
 
+def _whole_word_at(name, i, q):
+    """True if q occurs at name[i:] and ends on a word boundary."""
+    end = i + len(q)
+    return name.startswith(q, i) and (end == len(name) or name[end] == " ")
+
+
 def match_tier(name, q):
     """How well normalised name matches normalised query q; None if not at all."""
     if not name or not q:
@@ -70,9 +94,13 @@ def match_tier(name, q):
     if name == q or bare == q:
         return EXACT
     if name.startswith(q) or bare.startswith(q):
-        return PREFIX
-    if (" " + q) in (" " + name):
-        return WORD_PREFIX
+        whole = _whole_word_at(name, 0, q) or _whole_word_at(bare, 0, q)
+        return PREFIX + (0 if whole else PARTIAL_WORD_PENALTY)
+    padded = " " + name
+    if (" " + q) in padded:
+        starts = [m.start() for m in re.finditer(re.escape(" " + q), padded)]
+        whole = any(_whole_word_at(padded, i + 1, q) for i in starts)
+        return WORD_PREFIX + (0 if whole else PARTIAL_WORD_PENALTY)
     if q in name:
         return SUBSTRING
     words = name.split()
@@ -93,12 +121,38 @@ def score(item, q, q_bare):
     return best + TYPE_PENALTY.get(item.get("Type"), DEFAULT_PENALTY)
 
 
+def repeat_penalty(type_, n_already):
+    """Extra cost for the next item of type_ when n_already are placed."""
+    step = REPEAT_STEP.get(type_, 0)
+    return step * max(0, n_already - FREE_REPEATS + 1)
+
+
 def rerank(items, term):
-    """Return items sorted best-first for search term; stable on ties."""
+    """Return items best-first for search term; stable on ties.
+
+    Each type's items are queued by score; the list is built by repeatedly
+    taking whichever queue head is cheapest once its repeat penalty is added.
+    """
     q = norm(term)
     q_bare = _ARTICLE.sub("", q)
-    keyed = sorted(((score(it, q, q_bare), i) for i, it in enumerate(items)))
-    return [items[i] for _, i in keyed]
+    queues = {}
+    for i, it in enumerate(items):
+        queues.setdefault(it.get("Type"), []).append((score(it, q, q_bare), i))
+    for qu in queues.values():
+        qu.sort()
+    taken = dict.fromkeys(queues, 0)
+    heap = [(sc + repeat_penalty(t, 0), sc, i, t) for t, qu in queues.items() for sc, i in qu[:1]]
+    heapq.heapify(heap)
+    out = []
+    while heap:
+        _, _, i, t = heapq.heappop(heap)
+        out.append(items[i])
+        taken[t] += 1
+        qu = queues[t]
+        if taken[t] < len(qu):
+            sc, j = qu[taken[t]]
+            heapq.heappush(heap, (sc + repeat_penalty(t, taken[t]), sc, j, t))
+    return out
 
 
 def type_rank(name):
