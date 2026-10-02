@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.4.0 — 2026-10-01
+- People signal: people credited in more library titles rank higher. A bonus
+  of −2 per doubling of titles, capped at −6 (1 title: 0, 2: −2, 4: −4, 8+: −6).
+- `searchfix/people.py` counts titles per Emby person Id from three
+  background queries (movies, series, episodes; an episode credit counts toward
+  its show). Rebuilt every 6 h (`PEOPLE_REFRESH_HOURS`), ≈3.6 s of Emby
+  work, 69,750 people. Snapshot in the `searchfix-data` volume
+  (`/data/people_counts.json`, ≈0.75 MB) so restarts have counts immediately.
+- Needs its own Emby API key (`EMBY_API_KEY` in `.env`, git-ignored; Emby key
+  "custom-search"). Unset = signal off, ranking unchanged.
+- Deliberately separate from the curated-lists DB (`~/scripts/hsc_metadata.db`):
+  that DB covers movies only (≈57% of people, no TV), keys people by name, is
+  never refreshed per movie, and is owned by a different nightly pipeline.
+- `/health` reports `people=<n>` or `people=off`.
+
 ## 1.3.0 — 2026-10-01
 - Repeat penalty: in mixed lists (Top Results), the 4th and later Person,
   Episode, Tag, Studio, Genre and Live TV items each cost +2 more than the

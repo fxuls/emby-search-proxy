@@ -10,6 +10,7 @@ for "secondary" types (people, episodes, tags...) so one type can't flood the
 mixed Top Results list.
 """
 import heapq
+import math
 import re
 import unicodedata
 
@@ -64,6 +65,13 @@ REPEAT_STEP = {
 }
 FREE_REPEATS = 3
 
+# People credited in more titles in the library rank higher among people:
+# bonus = -PERSON_BONUS_PER_DOUBLING per doubling of titles, capped at
+# PERSON_BONUS_MAX (1 title: 0, 2: -2, 4: -4, 8+: -6). Always smaller than the
+# 10-point gap between match tiers, so it never jumps a match level.
+PERSON_BONUS_PER_DOUBLING = 2
+PERSON_BONUS_MAX = 6
+
 # Matching on OriginalTitle/SortName, or on the query without its leading
 # article, is slightly weaker evidence than matching the display name.
 ALT_FIELD_PENALTY = 3
@@ -109,7 +117,14 @@ def match_tier(name, q):
     return None
 
 
-def score(item, q, q_bare):
+def person_bonus(titles):
+    """Negative score adjustment for a person credited in `titles` titles."""
+    if not titles or titles <= 1:
+        return 0
+    return -min(PERSON_BONUS_MAX, PERSON_BONUS_PER_DOUBLING * math.log2(titles))
+
+
+def score(item, q, q_bare, person_titles=None):
     best = NO_MATCH
     for field, extra in (("Name", 0), ("OriginalTitle", ALT_FIELD_PENALTY),
                          ("SortName", ALT_FIELD_PENALTY)):
@@ -118,7 +133,10 @@ def score(item, q, q_bare):
             t = match_tier(name, query)
             if t is not None:
                 best = min(best, t + extra + qextra)
-    return best + TYPE_PENALTY.get(item.get("Type"), DEFAULT_PENALTY)
+    total = best + TYPE_PENALTY.get(item.get("Type"), DEFAULT_PENALTY)
+    if person_titles is not None and item.get("Type") == "Person":
+        total += person_bonus(person_titles(item.get("Id")))
+    return total
 
 
 def repeat_penalty(type_, n_already):
@@ -127,8 +145,11 @@ def repeat_penalty(type_, n_already):
     return step * max(0, n_already - FREE_REPEATS + 1)
 
 
-def rerank(items, term):
+def rerank(items, term, person_titles=None):
     """Return items best-first for search term; stable on ties.
+
+    person_titles: optional callable person Id -> number of library titles
+    (None = signal unavailable, no person bonus).
 
     Each type's items are queued by score; the list is built by repeatedly
     taking whichever queue head is cheapest once its repeat penalty is added.
@@ -137,7 +158,7 @@ def rerank(items, term):
     q_bare = _ARTICLE.sub("", q)
     queues = {}
     for i, it in enumerate(items):
-        queues.setdefault(it.get("Type"), []).append((score(it, q, q_bare), i))
+        queues.setdefault(it.get("Type"), []).append((score(it, q, q_bare, person_titles), i))
     for qu in queues.values():
         qu.sort()
     taken = dict.fromkeys(queues, 0)

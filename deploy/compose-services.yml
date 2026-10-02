@@ -13,6 +13,11 @@
       - EMBY_UPSTREAM=http://emby:8096
       - CANDIDATE_POOL=150
       - TZ=America/Denver
+      - PEOPLE_REFRESH_HOURS=6
+    env_file:
+      - /home/mc/homelab/emby-search-proxy/.env   # EMBY_API_KEY, not in git
+    volumes:
+      - searchfix-data:/data                      # people-count snapshot
     networks:
       default:
         aliases: [searchfix]
@@ -40,3 +45,7 @@
     logging:
       driver: json-file
       options: { max-size: "5m", max-file: "3" }
+
+# plus, at top level of the compose file:
+# volumes:
+#   searchfix-data:

@@ -74,6 +74,17 @@ Emergency: if nginx is wedged and you can't think, `docker restart emby-proxy`.
 | Remote playback errors | Not this proxy first: see gotchas.md "socat relay drops long connections". Then `docker logs emby-proxy` |
 | Dashboard shows every client at 172.x | `ProxyHeaderMode` got reset. Set *Read proxy headers* to Yes |
 
+## People signal
+
+- Key: `.env` → `EMBY_API_KEY` (Emby API key "custom-search"). `chmod 600`, git-ignored.
+  To rotate: create a new key in Emby → Settings → API Keys, edit `.env`,
+  `cd ~/docker/emby && docker compose up -d searchfix`.
+- Status: `docker exec emby-searchfix wget -qO- http://127.0.0.1:8080/health` → `ok people=69750`.
+  `docker logs emby-searchfix | grep people:` shows builds, snapshot loads and failures.
+- Force a rebuild now: `docker restart emby-searchfix`. It loads the snapshot, then
+  rebuilds when the snapshot is ≥6 h old; delete the volume file first to force it immediately.
+- If Emby is down during a refresh, the old table is kept and it retries every 10 min.
+
 ## Tuning knobs
 
 | Where | Knob | Default |
@@ -82,3 +93,6 @@ Emergency: if nginx is wedged and you can't think, `docker restart emby-proxy`.
 | env `CANDIDATE_POOL` | items fetched from Emby before trimming | 150 |
 | env `UPSTREAM_TIMEOUT` | seconds to wait for Emby | 30 |
 | env `LOG_SEARCH_TERMS` | `0` logs `term='-'` instead of the search text | 1 |
+| env `PEOPLE_REFRESH_HOURS` | how often person title counts are rebuilt | 6 |
+| `rank.py` | `PERSON_BONUS_PER_DOUBLING`, `PERSON_BONUS_MAX` | 2, 6 |
+| `rank.py` | `REPEAT_STEP`, `FREE_REPEATS`, `PARTIAL_WORD_PENALTY` | 2, 3, 2 |

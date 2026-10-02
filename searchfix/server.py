@@ -33,12 +33,19 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rank
+from people import PeopleCounts
 
 UPSTREAM = os.environ.get("EMBY_UPSTREAM", "http://emby:8096").rstrip("/")
 POOL = int(os.environ.get("CANDIDATE_POOL", "150"))
 TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "30"))
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8080"))
 LOG_TERMS = os.environ.get("LOG_SEARCH_TERMS", "1") == "1"
+# Optional people signal: needs its own Emby API key (requests are otherwise
+# made with each user's own credentials). Unset = signal off.
+API_KEY = os.environ.get("EMBY_API_KEY", "")
+PEOPLE_SNAPSHOT = os.environ.get("PEOPLE_SNAPSHOT", "/data/people_counts.json")
+PEOPLE_REFRESH_HOURS = float(os.environ.get("PEOPLE_REFRESH_HOURS", "6"))
+PEOPLE = None
 
 HOP_HEADERS = {"host", "connection", "accept-encoding", "content-length",
                "transfer-encoding", "keep-alive", "upgrade", "te", "trailer",
@@ -154,7 +161,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_any(self):
         if self.path == "/health":
-            return self.send(200, [("Content-Type", "text/plain")], b"ok\n")
+            people = f"people={len(PEOPLE)}" if PEOPLE and PEOPLE.ready else "people=off"
+            return self.send(200, [("Content-Type", "text/plain")], f"ok {people}\n".encode())
 
         parsed = urllib.parse.urlsplit(self.path)
         pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
@@ -192,7 +200,8 @@ class Handler(BaseHTTPRequestHandler):
             if mode == "types":
                 data["Items"] = rank.order_types(items)
             else:
-                items = rank.rerank(items, params["searchterm"])
+                lookup = PEOPLE.get if PEOPLE and PEOPLE.ready else None
+                items = rank.rerank(items, params["searchterm"], lookup)
                 data["Items"] = items[start:start + limit] if limit else items[start:]
             body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
             term = params["searchterm"] if LOG_TERMS else "-"
@@ -216,6 +225,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    global PEOPLE
+    if API_KEY:
+        PEOPLE = PeopleCounts(UPSTREAM, API_KEY, PEOPLE_SNAPSHOT, PEOPLE_REFRESH_HOURS, log).start()
+    else:
+        log("people: EMBY_API_KEY not set, people signal off")
     ThreadingHTTPServer.daemon_threads = True
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     log(f"searchfix listening on :{LISTEN_PORT}, upstream {UPSTREAM}, pool {POOL}")

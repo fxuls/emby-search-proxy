@@ -1,7 +1,7 @@
 FROM python:3.12-alpine
 WORKDIR /app
-COPY rank.py server.py ./
-RUN adduser -D -H -u 10001 searchfix
+COPY rank.py server.py people.py ./
+RUN adduser -D -H -u 10001 searchfix && mkdir /data && chown searchfix /data
 USER searchfix
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080

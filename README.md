@@ -66,6 +66,8 @@ better order.
 |---|---|
 | `searchfix/rank.py` | Ranking rules. Pure functions; this is the file to tune |
 | `searchfix/server.py` | HTTP service: decides what to rewrite, talks to Emby |
+| `searchfix/people.py` | Background table: library titles per person (people signal) |
+| `.env` | `EMBY_API_KEY` for the people signal. **Not in git** |
 | `searchfix/Dockerfile` | Image `emby-searchfix:local` |
 | `nginx/default.conf` | Front door on :8096, routing, timeouts, fallback |
 | `deploy/compose-services.yml` | The services as added to `~/docker/emby/docker-compose.yml` |

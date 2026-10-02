@@ -87,6 +87,31 @@ when they exist), Tags, then anything unknown.
   exempt so a franchise stays together. A single-type list (a search row)
   keeps its pure score order.
 
+### People signal (1.4.0)
+
+People credited in more titles in the library rank higher among people:
+`bonus = −min(6, 2 × log2(titles))`, so 1 title: 0, 2: −2, 4: −4, 8 or more: −6.
+Titles are counted per Emby person Id across movies, series and episodes, with
+an episode credit counting toward its series. The count is library-wide (all
+libraries, not per user); it only changes the order of people the searching
+user can already see.
+
+Built by `people.py` in a background thread (three `/Items?Fields=People`
+queries using the searchfix API key), rebuilt every 6 h, snapshotted to
+`/data/people_counts.json`. Until a table exists the bonus is simply skipped.
+A search never waits on it.
+
+Why not reuse the curated-lists DB (`~/scripts/hsc_metadata.db`, `movies_meta.people`)?
+It covers movies only: 37,893 of ~70k people, with no TV or guest stars. It
+keys people by name, not Id, so namesakes merge. Each movie is fetched once and
+never refreshed. And it is owned by a separate nightly AI pipeline. Coupling
+the front door for all Emby traffic to it would add a failure mode for a 3-second scan's worth of savings.
+
+Interaction with type order: the bonus (max 6) is smaller than a match level
+(10) but larger than the gap between some types. A prolific person whose name
+*starts with* the query (10 + 16 − 6 = 20) outranks a movie where the query is
+a *later word* (20 + 1 = 21). See the decision note in CHANGELOG/STATE.
+
 ### Candidate pool
 
 For list queries, searchfix asks Emby for `max(Limit, 150)` items, re-ranks
