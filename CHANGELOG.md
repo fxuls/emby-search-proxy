@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.1 — 2026-10-01
+- Home Screen Companion's top-watched rows are built from `.strm` copies in
+  `/config/plugins/HomeScreenCompanion/toplists/`. Accounts that can see them
+  got each such title twice in search ("Philosopher's Stone" at #1 and #10).
+  `rank.drop_hsc_copies` removes a copy whenever the real item (same type and
+  TMDB id, else same name and year) is in the same list. A lone copy is kept. It
+  applies to Top Results, rows and fuzzy matches, before paging. Pools now also
+  request `Path,ProviderIds,ProductionYear` (paths are visible to non-admins too).
+
 ## 1.7.0 — 2026-10-01
 - **Query expansion** (`searchfix/expand.py`): "Hary" showed only 3 obscure
   people ("Haryadi Anwar"…), because something matched, so fuzzy didn't fire.

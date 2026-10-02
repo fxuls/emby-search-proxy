@@ -226,3 +226,24 @@ def type_rank(name):
 def order_types(type_items):
     """Sort /ItemTypes entries ({"Name": "Movie", ...}) into row order."""
     return sorted(type_items, key=lambda t: type_rank(t.get("Name")))
+
+
+# Home Screen Companion builds its top-watched rows from .strm copies of real
+# items in its own folder; users with access to it saw every such title twice
+# in search ("Harry Potter and the Philosopher's Stone" #1 and #10, 2026-10-01).
+HSC_PATH_MARKER = "/plugins/homescreencompanion/"
+
+
+def _dedupe_key(item):
+    tmdb = (item.get("ProviderIds") or {}).get("Tmdb")
+    if tmdb:
+        return (item.get("Type"), "tmdb", tmdb)
+    return (item.get("Type"), "name", norm(item.get("Name")), item.get("ProductionYear"))
+
+
+def drop_hsc_copies(items):
+    """Remove HSC .strm copies when the real item is in the same list."""
+    def is_copy(i):
+        return HSC_PATH_MARKER in (i.get("Path") or "").lower()
+    real = {_dedupe_key(i) for i in items if not is_copy(i)}
+    return [i for i in items if not (is_copy(i) and _dedupe_key(i) in real)]

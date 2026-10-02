@@ -203,7 +203,7 @@ BASE = {}         # query -> pool without expansion (for the same-data compariso
 
 def _pool_for(q):
     p = {"SearchTerm": q, "Recursive": "true", "Limit": str(POOL),
-         "Fields": "OriginalTitle,SortName", "GroupProgramsBySeries": "true"}
+         "Fields": "OriginalTitle,SortName,Path,ProviderIds,ProductionYear", "GroupProgramsBySeries": "true"}
     rest = items(EMBY, p)
     if not SPLIT_POOL:
         return rest
@@ -308,7 +308,8 @@ def main():
     for vname, v in variants.items():
         apply_variant(v, defaults)
         lookup = None if (v.get("_people") is False or counts is None) else counts.get
-        ranked = {q: rank.rerank(p, q, lookup, CORRECTED.get(q)) for q, p in pools.items()}
+        ranked = {q: rank.drop_hsc_copies(rank.rerank(p, q, lookup, CORRECTED.get(q)))
+                  for q, p in pools.items()}
         rows = []
         for t, style, q in work:
             rows.append({"type": t["Type"], "style": style, "q": q, "target": t["Name"],
@@ -326,7 +327,7 @@ def main():
     rows, case_res, ranked = results["current"]
     if CORRECTED:
         lookup = counts.get if counts else None
-        base_ranked = {q: rank.rerank(BASE[q], q, lookup) for q in pools}
+        base_ranked = {q: rank.drop_hsc_copies(rank.rerank(BASE[q], q, lookup)) for q in pools}
         brows = [{**r, "new": rank_of(base_ranked[r["q"]], [t for t in targets if t["Name"] == r["target"]][0]["Id"])}
                  for r in rows]
         print("=== Same pools, expansion off vs on")

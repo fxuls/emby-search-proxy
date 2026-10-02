@@ -130,7 +130,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual([i["Name"] for i in json.loads(b)["Items"]], ["The Office (US)", "Office Space"])
         upstream = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(FakeEmby.seen[0][0]).query))
         self.assertEqual(upstream["Limit"], "50")
-        self.assertEqual(upstream["Fields"], "Overview,OriginalTitle,SortName")
+        self.assertEqual(upstream["Fields"], "Overview,OriginalTitle,SortName,Path,ProviderIds,ProductionYear")
         self.assertEqual(upstream["SearchTerm"], "The Office")
 
     def test_mixed_list_gets_separate_media_pool(self):
@@ -266,7 +266,7 @@ class FuzzyAndLog(ServerTest):
         ids_req = [p for p, hd in FakeEmby.seen if "Ids=" in p][0]
         q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(ids_req).query))
         self.assertEqual(q["Ids"], "is")
-        self.assertEqual(q["Fields"], "Overview")
+        self.assertEqual(q["Fields"], "Overview,Path,ProviderIds,ProductionYear")
         self.assertNotIn("SearchTerm", q)
         self.assertTrue(urllib.parse.urlsplit(ids_req).path.startswith("/emby/Users/u1/"))
         fwd = {k.lower(): v for p, hd in FakeEmby.seen if "Ids=" in p for k, v in hd.items()}
@@ -362,6 +362,30 @@ class TestTrafficNotLogged(FuzzyAndLog):
         _t.sleep(0.3)
         n = sqlite3.connect(self.db).execute("SELECT count(*) FROM searches WHERE device_id='testhdr'").fetchone()[0]
         self.assertEqual(n, 0)
+
+
+class HscCopies(unittest.TestCase):
+    def test_copy_dropped_when_real_item_present(self):
+        import server
+        real = {"Id": "r", "Type": "Movie", "Name": "HP", "ProviderIds": {"Tmdb": "671"},
+                "Path": "/media/mc/Expansion/media/movies/HP/HP.mkv"}
+        copy = {"Id": "c", "Type": "Movie", "Name": "HP", "ProviderIds": {"Tmdb": "671"},
+                "Path": "/config/plugins/HomeScreenCompanion/toplists/Daily Top Watched/HP.strm"}
+        other = {"Id": "o", "Type": "Movie", "Name": "Other", "ProviderIds": {"Tmdb": "1"},
+                 "Path": "/config/plugins/HomeScreenCompanion/toplists/Weekly Top Watched/Other.strm"}
+        self.assertEqual([i["Id"] for i in server.drop_hsc_copies([copy, real, other])], ["r", "o"])
+
+    def test_name_year_fallback_without_tmdb(self):
+        import server
+        real = {"Id": "r", "Type": "Movie", "Name": "HP", "ProductionYear": 2001, "Path": "/media/x.mkv"}
+        copy = {"Id": "c", "Type": "Movie", "Name": "HP", "ProductionYear": 2001,
+                "Path": "/config/plugins/HomeScreenCompanion/toplists/x/HP.strm"}
+        self.assertEqual([i["Id"] for i in server.drop_hsc_copies([copy, real])], ["r"])
+
+    def test_no_path_no_change(self):
+        import server
+        items = [{"Id": "a", "Type": "Movie", "Name": "A"}, {"Id": "b", "Type": "Movie", "Name": "A"}]
+        self.assertEqual(server.drop_hsc_copies(items), items)
 
 
 class UpstreamDown(unittest.TestCase):

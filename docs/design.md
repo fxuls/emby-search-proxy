@@ -179,6 +179,14 @@ Decision cached 60 s per user and term, so a search page's several requests
 share one gate query. Measured: fires on 1/1,102 real queries, 0 targets
 moved down, all 28 expectation checks pass.
 
+## Home Screen Companion copies (1.7.1)
+
+HSC's "Daily/Weekly Top Watched" rows are `.strm` copies of real movies in
+its plugin folder, and Emby search returns both. `rank.drop_hsc_copies` drops
+a copy when the real item (same Type + TMDB id, falling back to name + year)
+is in the same result list. It runs on the final list before paging. Home
+rows are untouched.
+
 ## Search log (1.6.0)
 
 `searches.db` (SQLite, WAL) in the bind-mounted data dir. One row per search:

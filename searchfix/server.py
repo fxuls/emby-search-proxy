@@ -35,6 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import expand
 import fuzzy
 import rank
+from rank import drop_hsc_copies  # noqa: F401  (re-exported for tests)
 from library import LibraryIndex
 from searchlog import SearchLog, UserNames, parse_auth, user_id_from
 
@@ -120,7 +121,7 @@ def widen_items_query(query_pairs, params):
     drop = ("limit", "fields", "startindex", "sortby", "sortorder")
     new = [(k, v) for k, v in query_pairs if k.lower() not in drop]
     fields = [f for f in params.get("fields", "").split(",") if f]
-    for f in ("OriginalTitle", "SortName"):
+    for f in ("OriginalTitle", "SortName", "Path", "ProviderIds", "ProductionYear"):
         if f not in fields:
             fields.append(f)
     start, limit = _int(params.get("startindex")), _int(params.get("limit"))
@@ -239,6 +240,11 @@ class Handler(BaseHTTPRequestHandler):
         if missing and "/users/" in path.lower():
             keep = [(k, v) for k, v in pairs
                     if k.lower() in ID_FETCH_KEEP or k.lower().startswith("x-emby-")]
+            fields = [f for f in dict(keep).get("Fields", "").split(",") if f]
+            for f in ("Path", "ProviderIds", "ProductionYear"):
+                if f not in fields:
+                    fields.append(f)
+            keep = [(k, v) for k, v in keep if k.lower() != "fields"] + [("Fields", ",".join(fields))]
             groups = [([i for i, t in missing if t != "Person"], []),
                       ([i for i, t in missing if t == "Person"],
                        [("IncludeItemTypes", "Person"), ("Recursive", "true")])]
@@ -346,7 +352,7 @@ class Handler(BaseHTTPRequestHandler):
                         and not (corrected and fuzzy.has_whole_query_match(items, corrected))):
                     head, items = self.fuzzy_head(items, params["searchterm"], parsed.path, pairs)
                     used_fuzzy = bool(head)
-                items = head + rank.rerank(items, params["searchterm"], lookup, corrected)
+                items = rank.drop_hsc_copies(head + rank.rerank(items, params["searchterm"], lookup, corrected))
                 data["Items"] = items[start:start + limit] if limit else items[start:]
             body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
             term = params["searchterm"] if LOG_TERMS else "-"
