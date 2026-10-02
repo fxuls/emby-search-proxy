@@ -16,6 +16,7 @@ os.environ["UPSTREAM_TIMEOUT"] = "5"
 
 class FakeEmby(BaseHTTPRequestHandler):
     seen = []
+    fail_media = False
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *a):
@@ -30,10 +31,20 @@ class FakeEmby(BaseHTTPRequestHandler):
         elif u.path.endswith("/ItemTypes"):
             body, status = json.dumps({"Items": [{"Name": "Tag"}, {"Name": "Person"}, {"Name": "Movie"}]}).encode(), 200
         elif u.path.endswith("/Items"):
-            items = [{"Type": "Tag", "Name": "office"},
-                     {"Type": "Movie", "Name": "Office Space"},
-                     {"Type": "Series", "Name": "The Office (US)"},
-                     {"Type": "Person", "Name": "Charles Officer"}]
+            items = [{"Id": "t", "Type": "Tag", "Name": "office"},
+                     {"Id": "m", "Type": "Movie", "Name": "Office Space"},
+                     {"Id": "s", "Type": "Series", "Name": "The Office (US)"},
+                     {"Id": "p", "Type": "Person", "Name": "Charles Officer"}]
+            if "IncludeItemTypes" in q:
+                allowed = q["IncludeItemTypes"].split(",")
+                items = [i for i in items if i["Type"] in allowed]
+                if FakeEmby.fail_media:
+                    body = b"boom"
+                    self.send_response(500)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
             n = int(q.get("Limit", 100))
             body, status = json.dumps({"Items": items[:n], "TotalRecordCount": 4}).encode(), 200
         else:
@@ -90,10 +101,33 @@ class ServerTest(unittest.TestCase):
     def test_items_widened_reranked_and_trimmed(self):
         s, h, b = self.get("/emby/Users/u/Items?SearchTerm=The%20Office&Limit=2&Fields=Overview")
         self.assertEqual([i["Name"] for i in json.loads(b)["Items"]], ["The Office (US)", "Office Space"])
-        upstream = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(FakeEmby.seen[-1][0]).query))
+        upstream = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(FakeEmby.seen[0][0]).query))
         self.assertEqual(upstream["Limit"], "50")
         self.assertEqual(upstream["Fields"], "Overview,OriginalTitle,SortName")
         self.assertEqual(upstream["SearchTerm"], "The Office")
+
+    def test_mixed_list_gets_separate_media_pool(self):
+        # "john" 2026-10-01: Emby filled the 150-item pool with 147 people
+        s, h, b = self.get("/emby/Users/u/Items?SearchTerm=office&Limit=10")
+        self.assertEqual(len(FakeEmby.seen), 2)
+        media_q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(FakeEmby.seen[1][0]).query))
+        self.assertEqual(media_q["IncludeItemTypes"], "Series,Movie,BoxSet")
+        names_ = [i["Name"] for i in json.loads(b)["Items"]]
+        self.assertEqual(len(names_), len(set(names_)))  # merged without duplicates
+        self.assertEqual(len(names_), 4)
+
+    def test_typed_row_has_no_second_fetch(self):
+        self.get("/emby/Users/u/Items?SearchTerm=office&IncludeItemTypes=Movie&Limit=10")
+        self.assertEqual(len(FakeEmby.seen), 1)
+
+    def test_media_pool_failure_is_harmless(self):
+        FakeEmby.fail_media = True
+        try:
+            s, h, b = self.get("/emby/Users/u/Items?SearchTerm=The%20Office&Limit=2")
+            self.assertEqual(s, 200)
+            self.assertEqual(json.loads(b)["Items"][0]["Name"], "The Office (US)")
+        finally:
+            FakeEmby.fail_media = False
 
     def test_lowercase_param_names(self):
         s, h, b = self.get("/emby/Users/u/Items?searchTerm=The%20Office&limit=1")

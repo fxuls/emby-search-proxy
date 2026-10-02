@@ -93,10 +93,19 @@ class PersonBonusTest(unittest.TestCase):
         self.assertEqual(rank.person_bonus(None), 0)
         self.assertEqual(rank.person_bonus(0), 0)
         self.assertEqual(rank.person_bonus(1), 0)
-        self.assertEqual(rank.person_bonus(2), -2)
-        self.assertEqual(rank.person_bonus(4), -4)
-        self.assertEqual(rank.person_bonus(8), -4)
+        self.assertEqual(rank.person_bonus(2), -1)
+        self.assertEqual(rank.person_bonus(4), -2)
+        self.assertEqual(rank.person_bonus(8), -3)
+        self.assertEqual(rank.person_bonus(16), -4)
         self.assertEqual(rank.person_bonus(500), -4)
+
+    def test_within_mode_never_moves_people_past_other_types(self):
+        # "gilbert" 2026-10-01: famous Gilbert Gottfried jumped the studio Gilbert Films
+        items = [{"Type": "Person", "Id": "gg", "Name": "Gilbert Gottfried"},
+                 {"Type": "Studio", "Id": "s", "Name": "Gilbert Films"},
+                 {"Type": "Person", "Id": "nobody", "Name": "Gilbert Nobody"}]
+        out = rank.rerank(items, "gilbert", {"gg": 40, "nobody": 1}.get)
+        self.assertEqual([i["Id"] for i in out], ["s", "gg", "nobody"])
 
     def test_famous_person_stays_below_later_word_movie(self):
         # 2026-10-01 decision A: Harry Shearer must not outrank "Dirty Harry"

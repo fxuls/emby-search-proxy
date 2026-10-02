@@ -135,6 +135,20 @@ class Rerank(unittest.TestCase):
         emby = [it("Person", f"Harry {n}") for n in range(30)] + [it("Episode", f"Harry ep {n}") for n in range(30)]
         self.assertEqual(names(rank.rerank(emby, "harry")), names(rank.rerank(list(emby), "harry")))
 
+    def test_exact_full_name_comes_first(self):
+        # "eddie murphy" 2026-10-01: his stand-up films outranked him
+        emby = [it("Movie", "Eddie Murphy: Delirious"), it("Movie", "Eddie Murphy Raw"),
+                it("Person", "Eddie Murphy")]
+        self.assertEqual(rank.rerank(emby, "Eddie Murphy")[0]["Type"], "Person")
+        # single words don't get the cap: "harry" keeps the type order
+        emby = [it("Person", "Harry"), it("Movie", "Harry Potter")]
+        self.assertEqual(rank.rerank(emby, "harry")[0]["Type"], "Movie")
+
+    def test_exact_tag_does_not_beat_titles(self):
+        # "time travel" 2026-10-01: the tag was #1
+        emby = [it("Tag", "Time Travel"), it("Episode", "Time Travel Paranoia")]
+        self.assertEqual(rank.rerank(emby, "time travel")[0]["Type"], "Episode")
+
     def test_empty(self):
         self.assertEqual(rank.rerank([], "x"), [])
 

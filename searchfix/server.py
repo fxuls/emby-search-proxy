@@ -40,6 +40,10 @@ POOL = int(os.environ.get("CANDIDATE_POOL", "150"))
 TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "30"))
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8080"))
 LOG_TERMS = os.environ.get("LOG_SEARCH_TERMS", "1") == "1"
+# Mixed lists (no IncludeItemTypes) get a second candidate fetch limited to
+# these types, merged in front. Emby's own order can fill the whole pool with
+# people ("john": 147 of 150 were people), so titles never got ranked at all.
+MEDIA_TYPES = os.environ.get("MEDIA_POOL_TYPES", "Series,Movie,BoxSet")
 # Optional people signal: needs its own Emby API key (requests are otherwise
 # made with each user's own credentials). Unset = signal off.
 API_KEY = os.environ.get("EMBY_API_KEY", "")
@@ -181,6 +185,15 @@ class Handler(BaseHTTPRequestHandler):
         except (urllib.error.URLError, OSError) as e:
             log(f"upstream error {e!r} for {parsed.path}")
             return self.send(502, [("Content-Type", "text/plain")], b"emby unreachable\n")
+        media_body = None
+        if mode == "items" and status == 200 and MEDIA_TYPES and "includeitemtypes" not in params:
+            try:
+                st, _, media_body = self.fetch(path_qs + "&" + urllib.parse.urlencode(
+                    {"IncludeItemTypes": MEDIA_TYPES}))
+                if st != 200:
+                    media_body = None
+            except (urllib.error.URLError, OSError):
+                media_body = None  # the main pool alone is still fine
         ms = (time.monotonic() - t0) * 1000
 
         if mode is None:
@@ -196,6 +209,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = json.loads(body)
             items = data.get("Items", [])
+            if media_body is not None:
+                media = json.loads(media_body).get("Items", [])
+                seen = {i.get("Id") for i in media}
+                items = media + [i for i in items if i.get("Id") not in seen]
             n_in = len(items)
             if mode == "types":
                 data["Items"] = rank.order_types(items)

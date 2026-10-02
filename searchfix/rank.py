@@ -42,7 +42,7 @@ TYPE_PENALTY = {
     "Person": 16,
     "Episode": 18,
     "Program": 20, "TvChannel": 20,
-    "Tag": 25,
+    "Tag": 30,   # 25 -> 30 (1.5.0): an exact tag ("time travel") no longer beats titles starting with it
 }
 DEFAULT_PENALTY = 20
 
@@ -72,18 +72,18 @@ FREE_REPEATS = 3
 # capped at 4 (2026-10-01, user choice "A") so a prolific person whose name
 # starts with the query (10+16-4=22) stays below a movie where the query is a
 # later word (20+1=21): people never jump the user's type order for movies.
-PERSON_BONUS_PER_DOUBLING = 2
+PERSON_BONUS_PER_DOUBLING = 1
 PERSON_BONUS_MAX = 4
 
 # "global": the bonus changes a person's score against every type.
 # "within": it only reorders people among themselves; against other types a
 # person competes with its plain score, so the user's type order holds.
-PERSON_BONUS_MODE = "global"
+PERSON_BONUS_MODE = "within"   # eval 2026-10-01: 26/26 checks vs 20/26 global
 
 # A query of 2+ words that exactly matches an item's name ("eddie murphy",
 # "office olympics") is a deliberate lookup: cap that item's type penalty at
 # this value so it can come first. None = off. Tags never get the cap.
-EXACT_PHRASE_PENALTY_CAP = None
+EXACT_PHRASE_PENALTY_CAP = 5
 
 # Matching on OriginalTitle/SortName, or on the query without its leading
 # article, is slightly weaker evidence than matching the display name.

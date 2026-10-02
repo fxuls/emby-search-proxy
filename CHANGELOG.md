@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.0 — 2026-10-01 (branch tune-1.5, pending approval)
+Measured with scripts/eval.py (400 targets, 1,288 queries, 26 checks) against
+1.4.1: hit@1 58.9% → 61.7%, @3 75.8% → 79.6%, @10 88.9% → 93.9%, MRR
+0.688 → 0.722, checks 20/26 → 26/26 (stock Emby: 42.7% / 55.4% / 71.7%).
+- Split candidate pool: mixed lists fetch shows/movies/collections separately
+  and merge them in front, because Emby can fill the 150-item pool with people
+  ("john": 147/150 were people).
+- People bonus now only reorders people among themselves (`within`), at 1 per
+  doubling, capped at 4 (2: −1, 4: −2, 8: −3, 16+: −4). Famous people no
+  longer jump studios or collections ("gilbert", "Dirty Harry Collection").
+- Exact multi-word name match caps the type penalty at 5, so "eddie murphy"
+  finds the person first. Single words keep the type order; tags excluded.
+- Tag penalty 25 → 30: an exact tag ("time travel") no longer beats titles
+  starting with it.
+
 ## 1.4.1 — 2026-10-01
 - Person bonus capped at −4 (user decision "A"): a prolific person whose name
   starts with the query no longer outranks a movie where it is a later word
