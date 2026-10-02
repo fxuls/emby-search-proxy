@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS searches (
     top_type    TEXT,
     top_name    TEXT,               -- what was shown first
     fuzzy       INTEGER DEFAULT 0,  -- 1 if typo-tolerant matches were added
+    corrected   TEXT,               -- term also searched for a rare misspelled word ("harry" for "hary")
     requests    INTEGER DEFAULT 1,  -- how many requests were folded into this row
     emby_ms     INTEGER
 );
@@ -124,6 +125,9 @@ class SearchLog:
     def _run(self):
         db = sqlite3.connect(self.path)
         db.executescript(SCHEMA)
+        cols = {r[1] for r in db.execute("PRAGMA table_info(searches)")}
+        if "corrected" not in cols:  # added in 1.7.0
+            db.execute("ALTER TABLE searches ADD COLUMN corrected TEXT")
         db.execute("PRAGMA journal_mode=WAL")  # readers (the bot) never block the writer
         last_prune = 0.0
         while True:
@@ -152,18 +156,19 @@ class SearchLog:
             sets = ["ts=?", "term=?", "requests=requests+1"]
             vals = [ev["ts"], ev["term"]]
             if has_result:  # the mixed-list request carries the interesting fields
-                sets += ["results=?", "top_type=?", "top_name=?", "fuzzy=?", "emby_ms=?"]
+                sets += ["results=?", "top_type=?", "top_name=?", "fuzzy=?", "emby_ms=?", "corrected=?"]
                 vals += [ev["results"], ev.get("top_type"), ev.get("top_name"),
-                         int(bool(ev.get("fuzzy"))), ev.get("emby_ms")]
+                         int(bool(ev.get("fuzzy"))), ev.get("emby_ms"), ev.get("corrected")]
             db.execute(f"UPDATE searches SET {', '.join(sets)} WHERE id=?", (*vals, row_id))
         else:
             cur = db.execute(
                 "INSERT INTO searches (ts, first_ts, user_id, user_name, client, app_version, device,"
-                " device_id, ip, term, results, top_type, top_name, fuzzy, emby_ms)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " device_id, ip, term, results, top_type, top_name, fuzzy, emby_ms, corrected)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ev["ts"], ev["ts"], ev.get("user_id"), name, ev.get("client"), ev.get("app_version"),
                  ev.get("device"), ev.get("device_id"), ev.get("ip"), ev["term"], ev.get("results"),
-                 ev.get("top_type"), ev.get("top_name"), int(bool(ev.get("fuzzy"))), ev.get("emby_ms")))
+                 ev.get("top_type"), ev.get("top_name"), int(bool(ev.get("fuzzy"))), ev.get("emby_ms"),
+                 ev.get("corrected")))
             row_id = cur.lastrowid
         db.commit()
         self.last[key] = (row_id, ev["term"], ev["ts"])

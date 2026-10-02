@@ -161,6 +161,24 @@ background, ~70 MB. Lookup median 12–16 ms, worst ~30 ms, plus one Ids fetch.
 Ordinary searches pay one in-memory check (microseconds). For comparison,
 Emby's own search takes 200–600 ms for multi-word queries.
 
+## Query expansion (1.7.0)
+
+Fuzzy (above) only helps when *nothing* matches. "Hary" matches three obscure
+people, so the user never saw the hundreds of "Harry" results they meant.
+`expand.py` builds a word-frequency vocabulary from the same library names and,
+when a typed word is rare (< 10 names) and a word with the same first letter,
+≤ 2 letters difference, similarity ≥ 0.8 and ≥ 10× the frequency exists,
+also searches the corrected term. Pools are merged; every item scores the
+better of (score for the typed term) and (score for the corrected term + 10).
+
+Gate, because correction is risky (a naive version rewrote 8% of real queries):
+expand only if the typed query matches ≤ 5 titles/people/studios and none
+strongly (exact name, or name starting with the query as whole words). Never
+correct a non-word that begins a longer word (the user is still typing).
+Decision cached 60 s per user and term, so a search page's several requests
+share one gate query. Measured: fires on 1/1,102 real queries, 0 targets
+moved down, all 28 expectation checks pass.
+
 ## Search log (1.6.0)
 
 `searches.db` (SQLite, WAL) in the bind-mounted data dir. One row per search:

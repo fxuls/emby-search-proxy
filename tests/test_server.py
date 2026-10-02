@@ -26,7 +26,24 @@ class FakeEmby(BaseHTTPRequestHandler):
         FakeEmby.seen.append((self.path, dict(self.headers)))
         u = urllib.parse.urlsplit(self.path)
         q = dict(urllib.parse.parse_qsl(u.query))
-        if u.path.endswith("/boom"):
+        if q.get("SearchTerm", "").lower() == "hary":
+            if u.path.endswith("/ItemTypes"):
+                body, status = json.dumps({"Items": [{"Name": "Person"}]}).encode(), 200
+            else:
+                ppl = [{"Id": "ha1", "Type": "Person", "Name": "Haryadi Anwar"}]
+                if q.get("IncludeItemTypes") not in (None, "Person"):
+                    ppl = []
+                body, status = json.dumps({"Items": ppl}).encode(), 200
+        elif q.get("SearchTerm", "").lower() == "harry":
+            if u.path.endswith("/ItemTypes"):
+                body, status = json.dumps({"Items": [{"Name": "Movie"}, {"Name": "Person"}]}).encode(), 200
+            else:
+                allx = [{"Id": "hp", "Type": "Movie", "Name": "Harry Potter"},
+                        {"Id": "ht", "Type": "Person", "Name": "Harry Townes"}]
+                t = q.get("IncludeItemTypes")
+                its = [i for i in allx if not t or i["Type"] in t.split(",")]
+                body, status = json.dumps({"Items": its}).encode(), 200
+        elif u.path.endswith("/boom"):
             body, status = b"nope", 500
         elif u.path.endswith("/ItemTypes"):
             body, status = json.dumps({"Items": [{"Name": "Tag"}, {"Name": "Person"}, {"Name": "Movie"}]}).encode(), 200
@@ -290,6 +307,50 @@ class FuzzyAndLog(ServerTest):
             _t.sleep(0.05)
         self.assertEqual(rows, [("interstelar", "AndroidTv", "Shield", "192.0.2.50",
                                  "0123456789abcdef0123456789abcdef", 1, "Interstellar")])
+
+
+class Expansion(FuzzyAndLog):
+    """'Hary' also searches 'harry' (expand.py) through the fake Emby."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        import expand
+        names = ([(f"h{i}", "Person", f"Harry P{i}") for i in range(40)]
+                 + [("ha1", "Person", "Haryadi Anwar"), ("ha2", "Person", "Sebastien Hary"),
+                    ("hp", "Movie", "Harry Potter")])
+        cls.server_mod.EXPANDER = expand.Expander(expand.Corrector(names))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server_mod.EXPANDER = None
+        super().tearDownClass()
+
+    def test_top_results_expanded(self):
+        s, h, b = self.get("/emby/Users/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1/Items?SearchTerm=Hary&Limit=10")
+        names_ = [i["Name"] for i in json.loads(b)["Items"]]
+        self.assertEqual(names_[0], "Harry Potter")
+        self.assertIn("Haryadi Anwar", names_)
+        self.assertIn("expanded", h.get("X-Searchfix", ""))
+
+    def test_rows_expanded(self):
+        s, h, b = self.get("/emby/ItemTypes?userId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1&SearchTerm=Hary")
+        self.assertEqual([t["Name"] for t in json.loads(b)["Items"]], ["Movie", "Person"])
+        s, h, b = self.get("/emby/Users/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1/Items?SearchTerm=Hary&IncludeItemTypes=Movie&SortBy=SortName&Limit=16")
+        self.assertEqual([i["Name"] for i in json.loads(b)["Items"]], ["Harry Potter"])
+
+    def test_correction_logged(self):
+        import sqlite3
+        import time as _t
+        self.get("/emby/Users/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2/Items?SearchTerm=hary&Limit=10",
+                 headers={"X-Emby-Authorization": 'MediaBrowser DeviceId="exp1"'})
+        for _ in range(50):
+            r = sqlite3.connect(self.db).execute(
+                "SELECT term, corrected FROM searches WHERE device_id='exp1'").fetchall()
+            if r:
+                break
+            _t.sleep(0.05)
+        self.assertEqual(r, [("hary", "harry")])
 
 
 class TestTrafficNotLogged(FuzzyAndLog):

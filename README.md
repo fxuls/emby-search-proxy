@@ -46,7 +46,9 @@ Two things are re-ordered:
 
 Searches return the same items Emby would, in a better order. The one
 exception is **typos**: when nothing matches the whole query ("harry poter",
-"interstelar"), the closest titles and people are added at the front.
+"interstelar"), the closest titles and people are added at the front; and
+when a rare misspelled word barely matches anything ("Hary"), the common word
+it was meant to be ("harry") is searched too.
 
 Every search is also **logged** (who, when, app, device, term, top result) to
 `~/docker/emby/searchfix-data/searches.db`. Read it from Telegram with
@@ -73,6 +75,7 @@ Every search is also **logged** (who, when, app, device, term, top result) to
 | `searchfix/server.py` | HTTP service: decides what to rewrite, talks to Emby |
 | `searchfix/library.py` | Background index: library titles per person (people signal) + all names (for fuzzy) |
 | `searchfix/fuzzy.py` | Typo-tolerant lookup, used only when nothing matches the whole query |
+| `searchfix/expand.py` | Query expansion for rare misspelled words (hary → also harry) |
 | `searchfix/searchlog.py` | Search log writer (SQLite, one row per search) |
 | `.env` | `EMBY_API_KEY` for the people signal. **Not in git** |
 | `searchfix/Dockerfile` | Image `emby-searchfix:local` |

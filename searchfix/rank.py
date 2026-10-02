@@ -85,6 +85,10 @@ PERSON_BONUS_MODE = "within"   # eval 2026-10-01: 26/26 checks vs 20/26 global
 # this value so it can come first. None = off. Tags never get the cap.
 EXACT_PHRASE_PENALTY_CAP = 5
 
+# Score penalty for matching only the expansion's corrected term ("harry" for a
+# typed "hary"): one match tier, so a real match for what was typed wins.
+ALT_TERM_PENALTY = 10
+
 # Matching on OriginalTitle/SortName, or on the query without its leading
 # article, is slightly weaker evidence than matching the display name.
 ALT_FIELD_PENALTY = 3
@@ -171,21 +175,29 @@ def repeat_penalty(type_, n_already):
     return step * max(0, n_already - FREE_REPEATS + 1)
 
 
-def rerank(items, term, person_titles=None):
+def rerank(items, term, person_titles=None, alt_term=None):
     """Return items best-first for search term; stable on ties.
 
     person_titles: optional callable person Id -> number of library titles
     (None = signal unavailable, no person bonus).
+    alt_term: optional corrected term (see expand.py); an item scores the
+    better of its score for term and its score for alt_term + ALT_TERM_PENALTY.
 
     Each type's items are queued by score; the list is built by repeatedly
     taking whichever queue head is cheapest once its repeat penalty is added.
     """
     q = norm(term)
     q_bare = _ARTICLE.sub("", q)
+    alt = norm(alt_term) if alt_term else None
+    alt_bare = _ARTICLE.sub("", alt) if alt else None
     # queue entries: (within-type key, original index, cross-type score)
     queues = {}
     for i, it in enumerate(items):
         cross, within = score_parts(it, q, q_bare, person_titles)
+        if alt:
+            c2, w2 = score_parts(it, alt, alt_bare, person_titles)
+            cross = min(cross, c2 + ALT_TERM_PENALTY)
+            within = min(within, w2 + ALT_TERM_PENALTY)
         queues.setdefault(it.get("Type"), []).append((within, i, cross))
     for qu in queues.values():
         qu.sort()

@@ -35,6 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(REPO, "searchfix"))
+import expand  # noqa: E402
 import rank  # noqa: E402
 
 EMBY = os.environ.get("EMBY_URL", "http://emby:8096")
@@ -61,6 +62,8 @@ def _before(items, a_type, b_type):
     return pa is None or pb is None or pa < pb
 
 CASES = [
+    ("hary", "Hary: a Harry Potter film is #1 (expansion)", lambda it: it[0]["Name"].startswith("Harry Potter")),
+    ("hary", "Hary: the real 'Hary' people still listed", lambda it: _pos(it, "Haryadi Anwar") is not None),
     ("harry", "Harry Potter film is #1", lambda it: (it[0]["Name"].startswith("Harry Potter"))),
     ("harry", "Dirty Harry (movie) before first person", lambda it: _pos(it, "Dirty Harry", "Movie") < _pos(it, type_="Person")),
     ("harry", "Dirty Harry Collection before first person", lambda it: (_pos(it, "Dirty Harry Collection") or 99) < (_pos(it, type_="Person") or 99)),
@@ -102,7 +105,7 @@ TYPOS = [
     ("stranger thigns", "Stranger Things"), ("pulp fction", "Pulp Fiction"),
     ("leonardo dicapro", "Leonardo DiCaprio"), ("denzel washingon", "Denzel Washington"),
     ("jurrasic world", "Jurassic World"), ("the dark night", "The Dark Knight"),
-    ("frozn", "Frozen"), ("greys anatomy", "Grey"),
+    ("frozn", "Frozen"), ("greys anatomy", "Grey"), ("hary", "Harry Potter"),
 ]
 
 # Alternative weight settings to compare (applied by monkeypatching rank).
@@ -193,8 +196,12 @@ SPLIT_POOL = True
 MEDIA_TYPES = "Series,Movie,BoxSet"
 
 
-def fetch_pool(q):
-    """Same candidate pool searchfix builds (split: titles + everything)."""
+EXPANDER = None   # built in main() from the library snapshot, same code as searchfix
+CORRECTED = {}    # query -> corrected term (when expansion fired)
+BASE = {}         # query -> pool without expansion (for the same-data comparison)
+
+
+def _pool_for(q):
     p = {"SearchTerm": q, "Recursive": "true", "Limit": str(POOL),
          "Fields": "OriginalTitle,SortName", "GroupProgramsBySeries": "true"}
     rest = items(EMBY, p)
@@ -203,6 +210,22 @@ def fetch_pool(q):
     media = items(EMBY, {**p, "IncludeItemTypes": MEDIA_TYPES})
     seen = {i["Id"] for i in media}
     return media + [i for i in rest if i["Id"] not in seen]
+
+
+def fetch_pool(q):
+    """Same candidate pool searchfix builds (split pool, plus expansion)."""
+    pool = _pool_for(q)
+    BASE[q] = list(pool)
+    corrected = None
+    if EXPANDER is not None:
+        corrected = EXPANDER.decide(q, lambda: items(EMBY, {
+            "SearchTerm": q, "Recursive": "true", "Limit": str(POOL),
+            "Fields": "OriginalTitle,SortName"}), key="eval")
+    if corrected:
+        CORRECTED[q] = corrected
+        seen = {i["Id"] for i in pool}
+        pool += [i for i in _pool_for(corrected) if i["Id"] not in seen]
+    return pool
 
 
 def fetch_stock(q):
@@ -250,18 +273,30 @@ def main():
     ap.add_argument("--live", action="store_true")
     ap.add_argument("--worst", type=int, default=25)
     ap.add_argument("--single-pool", action="store_true", help="old behaviour: one mixed pool")
+    ap.add_argument("--no-expand", action="store_true", help="measure without query expansion")
     args = ap.parse_args()
 
-    global SPLIT_POOL
+    global SPLIT_POOL, EXPANDER
     SPLIT_POOL = not args.single_pool
     t0 = time.time()
     counts = load_people()
+    if not args.no_expand:
+        try:
+            with open(SNAPSHOT) as f:
+                names = [tuple(n) for n in json.load(f).get("names", [])]
+            EXPANDER = expand.Expander(expand.Corrector(names)) if names else None
+        except OSError:
+            EXPANDER = None
     targets = make_targets(args.n, args.seed)
     work = [(t, style, q) for t in targets for style, q in queries_for(t).items()]
     uniq = sorted({q for _, _, q in work} | {c[0] for c in CASES})
     with ThreadPoolExecutor(8) as ex:
         pools = dict(zip(uniq, ex.map(fetch_pool, uniq)))
         stock = dict(zip(uniq, ex.map(fetch_stock, uniq)))
+    real = {q for _, _, q in work}
+    exp_real = sorted(q for q in CORRECTED if q in real)
+    print(f"expansion fired on {len(exp_real)} of {len(real)} real queries: "
+          + ", ".join(f"{q!r}->{CORRECTED[q]!r}" for q in exp_real[:25]))
     print(f"{len(targets)} targets, {len(work)} queries ({len(uniq)} unique), "
           f"people table: {len(counts) if counts else 'none'}, fetched in {time.time() - t0:.0f}s\n")
 
@@ -273,7 +308,7 @@ def main():
     for vname, v in variants.items():
         apply_variant(v, defaults)
         lookup = None if (v.get("_people") is False or counts is None) else counts.get
-        ranked = {q: rank.rerank(p, q, lookup) for q, p in pools.items()}
+        ranked = {q: rank.rerank(p, q, lookup, CORRECTED.get(q)) for q, p in pools.items()}
         rows = []
         for t, style, q in work:
             rows.append({"type": t["Type"], "style": style, "q": q, "target": t["Name"],
@@ -289,6 +324,18 @@ def main():
     apply_variant({}, defaults)
 
     rows, case_res, ranked = results["current"]
+    if CORRECTED:
+        lookup = counts.get if counts else None
+        base_ranked = {q: rank.rerank(BASE[q], q, lookup) for q in pools}
+        brows = [{**r, "new": rank_of(base_ranked[r["q"]], [t for t in targets if t["Name"] == r["target"]][0]["Id"])}
+                 for r in rows]
+        print("=== Same pools, expansion off vs on")
+        print(f"  {'expansion off':22} {summarize(brows, 'new')}")
+        print(f"  {'expansion on':22} {summarize(rows, 'new')}")
+        hurt = [(r, b) for r, b in zip(rows, brows) if (r["new"] or 999) > (b["new"] or 999)]
+        print(f"  expansion moved {len(hurt)} targets down: "
+              + ", ".join(f"{r['q']!r} #{b['new']}->#{r['new']}" for r, b in hurt[:15]))
+        print()
     print("=== Known-item search: where the target lands in Top Results (first 50)")
     print(f"  {'':22} {'stock Emby':55} searchfix")
     print(f"  {'ALL':22} {summarize(rows, 'stock'):55} {summarize(rows, 'new')}")

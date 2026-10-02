@@ -32,6 +32,7 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import expand
 import fuzzy
 import rank
 from library import LibraryIndex
@@ -55,6 +56,7 @@ SEARCH_DB = os.environ.get("SEARCH_LOG_DB", "/data/searches.db")
 FUZZY_ENABLED = os.environ.get("FUZZY", "1") == "1"
 PEOPLE = None      # LibraryIndex: person title counts + names
 FUZZY = None       # FuzzyIndex, rebuilt whenever PEOPLE rebuilds
+EXPANDER = None    # expand.Expander (rare misspelled word -> also search the common word)
 SEARCHLOG = None
 
 # Presentation params copied from the client's request when fetching fuzzy
@@ -174,7 +176,38 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def record_search(self, path, params, results=None, top=None, fuzzy=False, ms=None):
+    @staticmethod
+    def with_term(path_qs, new_term):
+        """path_qs with its SearchTerm value replaced."""
+        u = urllib.parse.urlsplit(path_qs)
+        pairs = [(k, new_term if k.lower() == "searchterm" else v)
+                 for k, v in urllib.parse.parse_qsl(u.query, keep_blank_values=True)]
+        return u.path + "?" + urllib.parse.urlencode(pairs)
+
+    def expansion(self, path, params, pairs):
+        """Corrected term to search as well, or None (see expand.py)."""
+        if EXPANDER is None:
+            return None
+        uid = user_id_from(path, params)
+        if not uid:
+            return None
+        auth = [(k, v) for k, v in pairs if k.lower() == "api_key" or k.lower().startswith("x-emby-")]
+
+        def fetch_mixed():
+            qs = urllib.parse.urlencode(auth + [
+                ("SearchTerm", params["searchterm"]), ("Recursive", "true"),
+                ("Limit", str(POOL)), ("Fields", "OriginalTitle,SortName")])
+            st, _, b = self.fetch(f"/emby/Users/{uid}/Items?{qs}")
+            return json.loads(b).get("Items", []) if st == 200 else []
+
+        try:
+            return EXPANDER.decide(params["searchterm"], fetch_mixed, key=uid)
+        except Exception as e:
+            log(f"expand: failed ({e!r})")
+            return None
+
+    def record_search(self, path, params, results=None, top=None, fuzzy=False, ms=None,
+                      corrected=None):
         if SEARCHLOG is None or self.headers.get("X-Searchfix-Test"):
             return  # smoke/eval traffic stays out of the household search log
         try:
@@ -183,7 +216,8 @@ class Handler(BaseHTTPRequestHandler):
                 term=params.get("searchterm", ""), user_id=user_id_from(path, params),
                 ip=self.headers.get("X-Real-IP") or self.client_address[0],
                 results=results, top_type=(top or {}).get("Type"), top_name=(top or {}).get("Name"),
-                fuzzy=fuzzy, emby_ms=int(ms) if ms is not None else None, **auth)
+                fuzzy=fuzzy, corrected=corrected,
+                emby_ms=int(ms) if ms is not None else None, **auth)
         except Exception as e:
             log(f"searchlog: record failed ({e!r})")
 
@@ -256,6 +290,22 @@ class Handler(BaseHTTPRequestHandler):
                     media_body = None
             except (urllib.error.URLError, OSError):
                 media_body = None  # the main pool alone is still fine
+        corrected = None
+        extra_bodies = []   # responses for the corrected term, merged after the originals
+        if mode is not None and status == 200:
+            corrected = self.expansion(parsed.path, params, pairs)
+            if corrected:
+                alt_qs = [self.with_term(path_qs, corrected)]
+                if media_body is not None:
+                    alt_qs.append(self.with_term(path_qs + "&" + urllib.parse.urlencode(
+                        {"IncludeItemTypes": MEDIA_TYPES}), corrected))
+                for q in alt_qs:
+                    try:
+                        st, _, b = self.fetch(q)
+                        if st == 200:
+                            extra_bodies.append(b)
+                    except (urllib.error.URLError, OSError):
+                        pass
         ms = (time.monotonic() - t0) * 1000
 
         if mode is None:
@@ -276,6 +326,14 @@ class Handler(BaseHTTPRequestHandler):
                 media = json.loads(media_body).get("Items", [])
                 seen = {i.get("Id") for i in media}
                 items = media + [i for i in items if i.get("Id") not in seen]
+            if extra_bodies:
+                key = (lambda i: i.get("Name")) if mode == "types" else (lambda i: i.get("Id"))
+                seen = {key(i) for i in items}
+                for b in extra_bodies:
+                    for i in json.loads(b).get("Items", []):
+                        if key(i) not in seen:
+                            seen.add(key(i))
+                            items.append(i)
             n_in = len(items)
             used_fuzzy = False
             if mode == "types":
@@ -284,23 +342,25 @@ class Handler(BaseHTTPRequestHandler):
                 lookup = PEOPLE.get if PEOPLE and PEOPLE.ready else None
                 head = []
                 if (FUZZY is not None and "includeitemtypes" not in params
-                        and not fuzzy.has_whole_query_match(items, params["searchterm"])):
+                        and not fuzzy.has_whole_query_match(items, params["searchterm"])
+                        and not (corrected and fuzzy.has_whole_query_match(items, corrected))):
                     head, items = self.fuzzy_head(items, params["searchterm"], parsed.path, pairs)
                     used_fuzzy = bool(head)
-                items = head + rank.rerank(items, params["searchterm"], lookup)
+                items = head + rank.rerank(items, params["searchterm"], lookup, corrected)
                 data["Items"] = items[start:start + limit] if limit else items[start:]
             body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
             term = params["searchterm"] if LOG_TERMS else "-"
             log(f"{mode:5} client={self.client_name()!r} term={term!r} "
                 f"types={params.get('includeitemtypes', '-')} start={start} "
                 f"in={n_in} out={len(data['Items'])} emby_ms={ms:.0f}"
-                + (" fuzzy" if used_fuzzy else ""))
+                + (" fuzzy" if used_fuzzy else "") + (f" +{corrected!r}" if corrected else ""))
             mixed = mode == "items" and "includeitemtypes" not in params and start == 0
             top = data["Items"][0] if (mixed and data["Items"]) else {}
             self.record_search(parsed.path, params, results=n_in if mixed else None,
-                               top=top, fuzzy=used_fuzzy, ms=ms)
+                               top=top, fuzzy=used_fuzzy, ms=ms, corrected=corrected)
             return self.send(status, headers, body,
-                             extra=[("X-Searchfix", mode + (" fuzzy" if used_fuzzy else ""))])
+                             extra=[("X-Searchfix", mode + (" fuzzy" if used_fuzzy else "")
+                                     + (" expanded" if corrected else ""))])
         except Exception as e:  # never break search: serve what Emby gave us
             log(f"rewrite failed ({e!r}) for {self.path}")
             if mode == "items":
@@ -317,11 +377,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def _rebuild_fuzzy(lib):
-    global FUZZY
+    global FUZZY, EXPANDER
     t0 = time.monotonic()
     idx = fuzzy.FuzzyIndex(lib.names)
-    FUZZY = idx  # atomic swap; in-flight searches keep the old index
-    log(f"fuzzy: indexed {len(idx)} names in {time.monotonic() - t0:.1f}s")
+    ex = expand.Expander(expand.Corrector(lib.names))
+    FUZZY, EXPANDER = idx, ex  # atomic swap; in-flight searches keep the old ones
+    log(f"fuzzy: indexed {len(idx)} names, {len(ex.corrector.freq)} words "
+        f"in {time.monotonic() - t0:.1f}s")
 
 
 def main():

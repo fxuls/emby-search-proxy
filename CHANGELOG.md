@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.7.0 — 2026-10-01
+- **Query expansion** (`searchfix/expand.py`): "Hary" showed only 3 obscure
+  people ("Haryadi Anwar"…), because something matched, so fuzzy didn't fire.
+  Now a rare word with a far more common near-identical library word (hary →
+  harry) also searches the common word. Results are ranked together, and
+  matches only to the correction score one tier lower (`rank.ALT_TERM_PENALTY`),
+  so a real match for what was typed always comes first. Applies to Top
+  Results, the row list and each row.
+- Safety, measured on 1,102 real library queries: a naive corrector rewrote 92
+  of them ("Rick and Morty" → "rick and marty"). The shipped rules fire on 1
+  and move 0 targets down:
+  - only when the original matches ≤ 5 titles/people/studios AND none of them
+    strongly (name == query or starts with it as whole words)
+  - never on a non-word that starts a longer word (still typing: "skan" → Skandar)
+  - the decision is cached per user and term for 60 s (one gate query per search)
+- Search log gets a `corrected` column (auto-migrated); `/searches` shows
+  "✨also searched harry".
+- eval.py mirrors expansion with the same code, compares expansion off/on on
+  the same pools, and adds "Hary" checks.
+
 ## 1.6.0 — 2026-10-01
 - **Search log** (`searchfix/searchlog.py`): one SQLite row per search in
   `~/docker/emby/searchfix-data/searches.db`. It records user, app, app version,
