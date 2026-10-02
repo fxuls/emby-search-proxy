@@ -10,7 +10,7 @@ Because it runs server-side, it works in every app: Android TV, iOS, Roku,
 Samsung, LG, Xbox and the browser. The apps need no change.
 
 ```
- clients (LAN, and remote via <vpn-container> → socat relay)
+ clients (LAN, and remote via an optional relay/VPN)
                      │  :8096
                ┌─────▼─────┐   SearchTerm=…   ┌───────────┐
                │ emby-proxy├─────────────────►│ searchfix │
@@ -86,6 +86,24 @@ Every search is also **logged** (who, when, app, device, term, top result) to
 | `scripts/cutover.sh` | Put the proxy in front of Emby / take it out (dry run by default, auto-rollback) |
 | `docs/design.md` | Why a proxy, ranking rules, alternatives considered |
 | `docs/runbook.md` | Deploy, cutover, rollback, tuning, troubleshooting |
+
+## Using it on your own Emby server
+
+Built and tested against Emby 4.10 (web client, Android TV, iOS, Samsung, LG).
+Paths in `deploy/` and `docs/` are from the author's server; adjust them.
+
+1. Put `searchfix` and `emby-proxy` (nginx) in the same compose project as
+   Emby, using `deploy/compose-services.yml` as the template. Move Emby's
+   `8096:8096` port mapping to the `emby-proxy` service.
+2. Optional (people ranking, typo handling): create an Emby API key and put
+   `EMBY_API_KEY=<key>` in `.env` (git-ignored). Without it, re-ranking still works.
+3. In Emby → Settings → Network, set *Read proxy headers to determine client IP
+   addresses* to **Yes**, so Emby keeps seeing real client IPs.
+4. Run `scripts/smoke.py` against the proxy. `scripts/cutover.sh` automates the
+   switch and the rollback.
+
+Python 3.12, standard library only; tests: `python3 -m unittest discover -s tests`.
+MIT licensed.
 
 ## Quick reference
 

@@ -50,7 +50,7 @@ EMBY_API_KEY=<key> scripts/cutover.sh --rollback
 1. Installs the staged compose file (emby loses its `8096:8096` mapping; adds searchfix + emby-proxy).
 2. Runs `docker compose build searchfix && docker compose up -d`. Emby is recreated, a ~30–60 s interruption.
 3. Waits for :8096, then sets Emby `ProxyHeaderMode=AllAddresses` via the API.
-4. Runs `scripts/smoke.py`, then checks the remote path: <vpn-container> → socat :<relay-port> → :8096.
+4. Runs `scripts/smoke.py`, then, if `RELAY_CONTAINER`/`RELAY_PORT` are set, checks the remote path through that relay to :8096.
 
 ## Manual rollback (if the script itself can't run; ≈1 minute of Emby downtime)
 

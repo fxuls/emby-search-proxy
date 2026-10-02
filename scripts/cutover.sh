@@ -4,6 +4,7 @@
 #   EMBY_API_KEY=... scripts/cutover.sh              dry run: checks + plan only
 #   EMBY_API_KEY=... scripts/cutover.sh --apply      cut over; auto-rollback on failure
 #   EMBY_API_KEY=... scripts/cutover.sh --rollback   restore pre-proxy compose file
+#   optional: RELAY_CONTAINER=... RELAY_PORT=... also checks a remote-access relay
 #
 # --apply refuses while anyone is playing unless --force is also given.
 # Expects ~/docker/emby/docker-compose.searchproxy.yml (the staged file) and
@@ -102,8 +103,13 @@ wait_emby || { say "Emby not answering through proxy"; false; }
 say "Emby answering through emby-proxy"
 set_proxy_headers AllAddresses
 EMBY_API_KEY=$EMBY_API_KEY python3 "$REPO/scripts/smoke.py" http://localhost:8096
-say "checking remote path (<vpn-container> -> socat relay -> :8096)"
-docker run --rm --network container:<vpn-container> curlimages/curl -sf -o /dev/null \
-  http://localhost:<relay-port>/emby/System/Info/Public && say "relay path OK"
+# Optional: if remote users reach Emby through a relay running inside another
+# container's network (e.g. a VPN container + socat), check that path too.
+#   RELAY_CONTAINER=<container name> RELAY_PORT=<port it listens on>
+if [ -n "${RELAY_CONTAINER:-}" ] && [ -n "${RELAY_PORT:-}" ]; then
+  say "checking remote path ($RELAY_CONTAINER :$RELAY_PORT -> :8096)"
+  docker run --rm --network "container:$RELAY_CONTAINER" curlimages/curl -sf -o /dev/null \
+    "http://localhost:$RELAY_PORT/emby/System/Info/Public" && say "relay path OK"
+fi
 trap - ERR
 say "CUTOVER COMPLETE"
