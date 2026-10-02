@@ -1,6 +1,6 @@
 FROM python:3.12-alpine
 WORKDIR /app
-COPY rank.py server.py people.py ./
+COPY rank.py server.py library.py fuzzy.py searchlog.py ./
 RUN adduser -D -H -u 10001 searchfix && mkdir /data && chown searchfix /data
 USER searchfix
 ENV PYTHONUNBUFFERED=1

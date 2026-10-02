@@ -44,8 +44,13 @@ Two things are re-ordered:
    beat episodes and people, which beat tags and studios.
    Full rules: [docs/design.md](docs/design.md).
 
-Nothing is added or removed. Searches return the same items Emby would, in a
-better order.
+Searches return the same items Emby would, in a better order. The one
+exception is **typos**: when nothing matches the whole query ("harry poter",
+"interstelar"), the closest titles and people are added at the front.
+
+Every search is also **logged** (who, when, app, device, term, top result) to
+`~/docker/emby/searchfix-data/searches.db`. Read it from Telegram with
+`/searches`.
 
 ## Safety properties
 
@@ -66,7 +71,9 @@ better order.
 |---|---|
 | `searchfix/rank.py` | Ranking rules. Pure functions; this is the file to tune |
 | `searchfix/server.py` | HTTP service: decides what to rewrite, talks to Emby |
-| `searchfix/people.py` | Background table: library titles per person (people signal) |
+| `searchfix/library.py` | Background index: library titles per person (people signal) + all names (for fuzzy) |
+| `searchfix/fuzzy.py` | Typo-tolerant lookup, used only when nothing matches the whole query |
+| `searchfix/searchlog.py` | Search log writer (SQLite, one row per search) |
 | `.env` | `EMBY_API_KEY` for the people signal. **Not in git** |
 | `searchfix/Dockerfile` | Image `emby-searchfix:local` |
 | `nginx/default.conf` | Front door on :8096, routing, timeouts, fallback |

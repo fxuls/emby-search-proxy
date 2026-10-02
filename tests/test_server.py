@@ -30,6 +30,16 @@ class FakeEmby(BaseHTTPRequestHandler):
             body, status = b"nope", 500
         elif u.path.endswith("/ItemTypes"):
             body, status = json.dumps({"Items": [{"Name": "Tag"}, {"Name": "Person"}, {"Name": "Movie"}]}).encode(), 200
+        elif u.path.endswith("/Items") and "Ids" in q:
+            # mimics Emby: people only come back when IncludeItemTypes=Person
+            lib = {"is": {"Id": "is", "Type": "Movie", "Name": "Interstellar"},
+                   "th": {"Id": "th", "Type": "Person", "Name": "Tom Hanks"}}
+            want_people = q.get("IncludeItemTypes") == "Person"
+            items = [lib[i] for i in q["Ids"].split(",")
+                     if i in lib and (lib[i]["Type"] == "Person") == want_people]
+            body, status = json.dumps({"Items": items}).encode(), 200
+        elif u.path.endswith("/Items") and q.get("SearchTerm", "").lower() in ("interstelar", "tom hnks"):
+            body, status = json.dumps({"Items": [{"Id": "x", "Type": "Person", "Name": "Stella Inter"}]}).encode(), 200
         elif u.path.endswith("/Items"):
             items = [{"Id": "t", "Type": "Tag", "Name": "office"},
                      {"Id": "m", "Type": "Movie", "Name": "Office Space"},
@@ -207,6 +217,90 @@ class ServerTest(unittest.TestCase):
             self.assertEqual((s, b), (200, b"not json"))
         finally:
             FakeEmby.do_GET = orig
+
+
+class FuzzyAndLog(ServerTest):
+    """Fuzzy head + search log wired into the server (fake Emby)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        import fuzzy
+        import searchlog
+        import tempfile
+        cls.server_mod.FUZZY = fuzzy.FuzzyIndex([("is", "Movie", "Interstellar"),
+                                                 ("th", "Person", "Tom Hanks"),
+                                                 ("s", "Series", "The Office (US)")])
+        cls.db = os.path.join(tempfile.mkdtemp(), "s.db")
+        cls.server_mod.SEARCHLOG = searchlog.SearchLog(cls.db, log=lambda m: None).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server_mod.FUZZY = None
+        cls.server_mod.SEARCHLOG = None
+        super().tearDownClass()
+
+    def test_typo_gets_fuzzy_match_fetched_with_user_credentials(self):
+        s, h, b = self.get("/emby/Users/u1/Items?SearchTerm=interstelar&Limit=5&Fields=Overview",
+                           headers={"X-Emby-Token": "usertoken"})
+        names_ = [i["Name"] for i in json.loads(b)["Items"]]
+        self.assertEqual(names_[0], "Interstellar")
+        self.assertIn("Stella Inter", names_)
+        ids_req = [p for p, hd in FakeEmby.seen if "Ids=" in p][0]
+        q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(ids_req).query))
+        self.assertEqual(q["Ids"], "is")
+        self.assertEqual(q["Fields"], "Overview")
+        self.assertNotIn("SearchTerm", q)
+        self.assertTrue(urllib.parse.urlsplit(ids_req).path.startswith("/emby/Users/u1/"))
+        fwd = {k.lower(): v for p, hd in FakeEmby.seen if "Ids=" in p for k, v in hd.items()}
+        self.assertEqual(fwd.get("x-emby-token"), "usertoken")
+
+    def test_fuzzy_person_fetched_with_person_type(self):
+        # "tom hnks" 2026-10-01: Emby drops people from an Ids query without IncludeItemTypes=Person
+        s, h, b = self.get("/emby/Users/u1/Items?SearchTerm=tom%20hnks&Limit=5")
+        self.assertEqual(json.loads(b)["Items"][0]["Name"], "Tom Hanks")
+
+    def test_existing_match_moved_not_fetched(self):
+        # "the ofice": Emby (fake) returns The Office already; fuzzy moves it, no Ids fetch
+        s, h, b = self.get("/emby/Users/u1/Items?SearchTerm=the%20ofice&Limit=5")
+        self.assertEqual(json.loads(b)["Items"][0]["Name"], "The Office (US)")
+        self.assertFalse(any("Ids=" in p for p, _ in FakeEmby.seen))
+
+    def test_good_query_never_fuzzy(self):
+        s, h, b = self.get("/emby/Users/u1/Items?SearchTerm=office&Limit=5")
+        self.assertFalse(any("Ids=" in p for p, _ in FakeEmby.seen))
+
+    def test_typed_row_never_fuzzy(self):
+        self.get("/emby/Users/u1/Items?SearchTerm=interstelar&IncludeItemTypes=Movie&Limit=5")
+        self.assertFalse(any("Ids=" in p for p, _ in FakeEmby.seen))
+
+    def test_search_is_logged(self):
+        import sqlite3
+        import time as _t
+        self.get("/emby/Users/0123456789abcdef0123456789abcdef/Items?SearchTerm=interstelar&Limit=5",
+                 headers={"X-Emby-Authorization": 'MediaBrowser Client="AndroidTv", Device="Shield", '
+                                                  'DeviceId="logtest", Version="3"',
+                          "X-Real-IP": "192.0.2.50"})
+        for _ in range(50):
+            rows = sqlite3.connect(self.db).execute(
+                "SELECT term, client, device, ip, user_id, fuzzy, top_name FROM searches "
+                "WHERE device_id='logtest'").fetchall()
+            if rows:
+                break
+            _t.sleep(0.05)
+        self.assertEqual(rows, [("interstelar", "AndroidTv", "Shield", "192.0.2.50",
+                                 "0123456789abcdef0123456789abcdef", 1, "Interstellar")])
+
+
+class TestTrafficNotLogged(FuzzyAndLog):
+    def test_test_header_skips_log(self):
+        import sqlite3
+        import time as _t
+        self.get("/emby/Users/u1/Items?SearchTerm=office&Limit=5",
+                 headers={"X-Searchfix-Test": "1", "X-Emby-Authorization": 'MediaBrowser DeviceId="testhdr"'})
+        _t.sleep(0.3)
+        n = sqlite3.connect(self.db).execute("SELECT count(*) FROM searches WHERE device_id='testhdr'").fetchone()[0]
+        self.assertEqual(n, 0)
 
 
 class UpstreamDown(unittest.TestCase):

@@ -32,8 +32,10 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import fuzzy
 import rank
-from people import PeopleCounts
+from library import LibraryIndex
+from searchlog import SearchLog, UserNames, parse_auth, user_id_from
 
 UPSTREAM = os.environ.get("EMBY_UPSTREAM", "http://emby:8096").rstrip("/")
 POOL = int(os.environ.get("CANDIDATE_POOL", "150"))
@@ -47,9 +49,18 @@ MEDIA_TYPES = os.environ.get("MEDIA_POOL_TYPES", "Series,Movie,BoxSet")
 # Optional people signal: needs its own Emby API key (requests are otherwise
 # made with each user's own credentials). Unset = signal off.
 API_KEY = os.environ.get("EMBY_API_KEY", "")
-PEOPLE_SNAPSHOT = os.environ.get("PEOPLE_SNAPSHOT", "/data/people_counts.json")
+PEOPLE_SNAPSHOT = os.environ.get("PEOPLE_SNAPSHOT", "/data/library_index.json")
 PEOPLE_REFRESH_HOURS = float(os.environ.get("PEOPLE_REFRESH_HOURS", "6"))
-PEOPLE = None
+SEARCH_DB = os.environ.get("SEARCH_LOG_DB", "/data/searches.db")
+FUZZY_ENABLED = os.environ.get("FUZZY", "1") == "1"
+PEOPLE = None      # LibraryIndex: person title counts + names
+FUZZY = None       # FuzzyIndex, rebuilt whenever PEOPLE rebuilds
+SEARCHLOG = None
+
+# Presentation params copied from the client's request when fetching fuzzy
+# matches by Id, so they come back in the same shape as the rest of the list.
+ID_FETCH_KEEP = {"fields", "imagetypelimit", "enableimagetypes", "enableuserdata",
+                 "enableimages", "api_key", "userid"}
 
 HOP_HEADERS = {"host", "connection", "accept-encoding", "content-length",
                "transfer-encoding", "keep-alive", "upgrade", "te", "trailer",
@@ -163,10 +174,61 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def record_search(self, path, params, results=None, top=None, fuzzy=False, ms=None):
+        if SEARCHLOG is None or self.headers.get("X-Searchfix-Test"):
+            return  # smoke/eval traffic stays out of the household search log
+        try:
+            auth = parse_auth(self.headers, params)
+            SEARCHLOG.record(
+                term=params.get("searchterm", ""), user_id=user_id_from(path, params),
+                ip=self.headers.get("X-Real-IP") or self.client_address[0],
+                results=results, top_type=(top or {}).get("Type"), top_name=(top or {}).get("Name"),
+                fuzzy=fuzzy, emby_ms=int(ms) if ms is not None else None, **auth)
+        except Exception as e:
+            log(f"searchlog: record failed ({e!r})")
+
+    def fuzzy_head(self, items, term, path, pairs):
+        """Typo matches for term, moved/fetched to the front. Returns (head, rest)."""
+        try:
+            cands = FUZZY.search(term)
+        except Exception as e:
+            log(f"fuzzy: search failed ({e!r})")
+            return [], items
+        if not cands:
+            return [], items
+        by_id = {i.get("Id"): i for i in items}
+        missing = [(iid, type_) for _, iid, type_, _ in cands if iid not in by_id]
+        # Only fetch for a known user, with the user's own credentials, so Emby's
+        # per-user access rules and parental controls decide what comes back.
+        # Emby only returns people by Id when asked for IncludeItemTypes=Person,
+        # and drops them from a mixed-type Ids query, so people get their own fetch.
+        if missing and "/users/" in path.lower():
+            keep = [(k, v) for k, v in pairs
+                    if k.lower() in ID_FETCH_KEEP or k.lower().startswith("x-emby-")]
+            groups = [([i for i, t in missing if t != "Person"], []),
+                      ([i for i, t in missing if t == "Person"],
+                       [("IncludeItemTypes", "Person"), ("Recursive", "true")])]
+            for ids, extra in groups:
+                if not ids:
+                    continue
+                qs = urllib.parse.urlencode(keep + extra + [("Ids", ",".join(ids))])
+                try:
+                    st, _, b = self.fetch(f"{path}?{qs}")
+                    if st == 200:
+                        for i in json.loads(b).get("Items", []):
+                            by_id.setdefault(i.get("Id"), i)
+                except Exception as e:
+                    log(f"fuzzy: id fetch failed ({e!r})")
+        head_ids = [iid for _, iid, _, _ in cands if iid in by_id]
+        seen = set(head_ids)
+        return [by_id[i] for i in head_ids], [i for i in items if i.get("Id") not in seen]
+
     def handle_any(self):
         if self.path == "/health":
             people = f"people={len(PEOPLE)}" if PEOPLE and PEOPLE.ready else "people=off"
-            return self.send(200, [("Content-Type", "text/plain")], f"ok {people}\n".encode())
+            fz = f"fuzzy={len(FUZZY)}" if FUZZY is not None else "fuzzy=off"
+            sl = "searchlog=on" if SEARCHLOG else "searchlog=off"
+            return self.send(200, [("Content-Type", "text/plain")], f"ok {people} {fz} {sl}\n".encode())
 
         parsed = urllib.parse.urlsplit(self.path)
         pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
@@ -198,6 +260,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if mode is None:
             if params.get("searchterm"):
+                self.record_search(parsed.path, params)
                 keys = ",".join(sorted(k for k in params if k not in ("api_key", "x-emby-token")))
                 log(f"skip  client={self.client_name()!r} {self.command} {parsed.path} "
                     f"status={status} params={keys} startindex={params.get('startindex', '-')} "
@@ -214,18 +277,30 @@ class Handler(BaseHTTPRequestHandler):
                 seen = {i.get("Id") for i in media}
                 items = media + [i for i in items if i.get("Id") not in seen]
             n_in = len(items)
+            used_fuzzy = False
             if mode == "types":
                 data["Items"] = rank.order_types(items)
             else:
                 lookup = PEOPLE.get if PEOPLE and PEOPLE.ready else None
-                items = rank.rerank(items, params["searchterm"], lookup)
+                head = []
+                if (FUZZY is not None and "includeitemtypes" not in params
+                        and not fuzzy.has_whole_query_match(items, params["searchterm"])):
+                    head, items = self.fuzzy_head(items, params["searchterm"], parsed.path, pairs)
+                    used_fuzzy = bool(head)
+                items = head + rank.rerank(items, params["searchterm"], lookup)
                 data["Items"] = items[start:start + limit] if limit else items[start:]
             body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
             term = params["searchterm"] if LOG_TERMS else "-"
             log(f"{mode:5} client={self.client_name()!r} term={term!r} "
                 f"types={params.get('includeitemtypes', '-')} start={start} "
-                f"in={n_in} out={len(data['Items'])} emby_ms={ms:.0f}")
-            return self.send(status, headers, body, extra=[("X-Searchfix", mode)])
+                f"in={n_in} out={len(data['Items'])} emby_ms={ms:.0f}"
+                + (" fuzzy" if used_fuzzy else ""))
+            mixed = mode == "items" and "includeitemtypes" not in params and start == 0
+            top = data["Items"][0] if (mixed and data["Items"]) else {}
+            self.record_search(parsed.path, params, results=n_in if mixed else None,
+                               top=top, fuzzy=used_fuzzy, ms=ms)
+            return self.send(status, headers, body,
+                             extra=[("X-Searchfix", mode + (" fuzzy" if used_fuzzy else ""))])
         except Exception as e:  # never break search: serve what Emby gave us
             log(f"rewrite failed ({e!r}) for {self.path}")
             if mode == "items":
@@ -241,12 +316,27 @@ class Handler(BaseHTTPRequestHandler):
     do_GET = do_POST = do_HEAD = do_DELETE = do_PUT = handle_any
 
 
+def _rebuild_fuzzy(lib):
+    global FUZZY
+    t0 = time.monotonic()
+    idx = fuzzy.FuzzyIndex(lib.names)
+    FUZZY = idx  # atomic swap; in-flight searches keep the old index
+    log(f"fuzzy: indexed {len(idx)} names in {time.monotonic() - t0:.1f}s")
+
+
 def main():
-    global PEOPLE
+    global PEOPLE, SEARCHLOG
     if API_KEY:
-        PEOPLE = PeopleCounts(UPSTREAM, API_KEY, PEOPLE_SNAPSHOT, PEOPLE_REFRESH_HOURS, log).start()
+        PEOPLE = LibraryIndex(UPSTREAM, API_KEY, PEOPLE_SNAPSHOT, PEOPLE_REFRESH_HOURS, log)
+        if FUZZY_ENABLED:
+            PEOPLE.on_build.append(_rebuild_fuzzy)
+        PEOPLE.start()
     else:
-        log("people: EMBY_API_KEY not set, people signal off")
+        log("library: EMBY_API_KEY not set, people signal and fuzzy search off")
+    try:
+        SEARCHLOG = SearchLog(SEARCH_DB, UserNames(UPSTREAM, API_KEY), log).start()
+    except Exception as e:
+        log(f"searchlog: disabled ({e!r})")
     ThreadingHTTPServer.daemon_threads = True
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     log(f"searchfix listening on :{LISTEN_PORT}, upstream {UPSTREAM}, pool {POOL}")

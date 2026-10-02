@@ -4,7 +4,7 @@
 Runs on the compose network so it can reach stock Emby directly:
 
   docker run --rm --network emby_default -v ~/homelab/emby-search-proxy:/repo:ro \\
-    -v emby_searchfix-data:/data:ro -e EMBY_API_KEY=... -e EMBY_USER_ID=... \\
+    -v /home/mc/docker/emby/searchfix-data:/data:ro -e EMBY_API_KEY=... -e EMBY_USER_ID=... \\
     python:3.12-alpine python /repo/scripts/eval.py [--n 400] [--variants] [--live]
 
 What it does
@@ -41,7 +41,7 @@ EMBY = os.environ.get("EMBY_URL", "http://emby:8096")
 PROXY = os.environ.get("PROXY_URL", "http://emby-proxy:8096")
 KEY = os.environ["EMBY_API_KEY"]
 UID = os.environ["EMBY_USER_ID"]
-SNAPSHOT = os.environ.get("PEOPLE_SNAPSHOT", "/data/people_counts.json")
+SNAPSHOT = os.environ.get("PEOPLE_SNAPSHOT", "/data/library_index.json")
 TOP = 50          # what the web client asks for in Top Results
 POOL = 150        # what searchfix fetches
 
@@ -89,6 +89,22 @@ CASES = [
     ("the", "top 10 has no tags", lambda it: all(i["Type"] != "Tag" for i in it[:10])),
 ]
 
+# Typo checks, run against the live proxy only (fuzzy lives in server.py):
+# (query, substring expected in the first result's name)
+TYPOS = [
+    ("harry poter", "Harry Potter"), ("interstelar", "Interstellar"), ("brakng bad", "Breaking Bad"),
+    ("the ofice", "The Office"), ("lord of the rngs", "Lord of the Rings"), ("jurasic park", "Jurassic Park"),
+    ("tom hnks", "Tom Hanks"), ("goodfelas", "GoodFellas"), ("spiderman", "Spider-Man"),
+    ("avengrs endgame", "Avengers: Endgame"), ("simpsns", "Simpsons"), ("godfahter", "Godfather"),
+    ("star wrs", "Star Wars"), ("finding nmo", "Finding Nemo"), ("incepton", "Inception"),
+    ("gladiater", "Gladiator"), ("matrx", "Matrix"), ("scarlet johansson", "Scarlett Johansson"),
+    ("toy stroy", "Toy Story"), ("game of thornes", "Game of Thrones"),
+    ("stranger thigns", "Stranger Things"), ("pulp fction", "Pulp Fiction"),
+    ("leonardo dicapro", "Leonardo DiCaprio"), ("denzel washingon", "Denzel Washington"),
+    ("jurrasic world", "Jurassic World"), ("the dark night", "The Dark Knight"),
+    ("frozn", "Frozen"), ("greys anatomy", "Grey"),
+]
+
 # Alternative weight settings to compare (applied by monkeypatching rank).
 VARIANTS = {
     "current": {},
@@ -111,9 +127,16 @@ VARIANTS = {
 }
 
 
+TEST_HDR = {"X-Searchfix-Test": "1"}   # keeps eval traffic out of the search log
+
+
+def _open(url, timeout=60):
+    return urllib.request.urlopen(urllib.request.Request(url, headers=TEST_HDR), timeout=timeout)
+
+
 def get(base, path, params, timeout=60):
     q = urllib.parse.urlencode({"api_key": KEY, **params})
-    with urllib.request.urlopen(f"{base}/emby{path}?{q}", timeout=timeout) as r:
+    with _open(f"{base}/emby{path}?{q}", timeout=timeout) as r:
         return json.load(r)
 
 
@@ -300,13 +323,29 @@ def main():
 
     if args.live:
         sample = uniq[:: max(1, len(uniq) // 40)]
-        mism = 0
+        mism = fz = 0
         for q in sample:
-            live = items(PROXY, {"SearchTerm": q, "Recursive": "true", "Limit": str(TOP),
-                                 "GroupProgramsBySeries": "true"})
+            qs = urllib.parse.urlencode({"api_key": KEY, "SearchTerm": q, "Recursive": "true",
+                                         "Limit": str(TOP), "GroupProgramsBySeries": "true"})
+            with _open(f"{PROXY}/emby/Users/{UID}/Items?{qs}") as r:
+                if "fuzzy" in (r.headers.get("X-Searchfix") or ""):
+                    fz += 1          # typo matches added in front: not modelled by rank.py
+                    continue
+                live = json.load(r)["Items"]
             if [i["Id"] for i in live] != [i["Id"] for i in ranked[q][:TOP]]:
                 mism += 1
-        print(f"\n=== Live proxy vs rank.py: {len(sample) - mism}/{len(sample)} queries identical")
+        n = len(sample) - fz
+        print(f"\n=== Live proxy vs rank.py: {n - mism}/{n} queries identical ({fz} used fuzzy, skipped)")
+        print("\n=== Typo checks (live proxy, first result)")
+        ok = 0
+        for q, want in TYPOS:
+            qs = urllib.parse.urlencode({"api_key": KEY, "SearchTerm": q, "Recursive": "true", "Limit": "10"})
+            with _open(f"{PROXY}/emby/Users/{UID}/Items?{qs}") as r:
+                live = json.load(r)["Items"]
+            hit = bool(live) and want.lower() in live[0]["Name"].lower()
+            ok += hit
+            print(f"  {'PASS' if hit else 'FAIL'}  {q!r:22} -> {live[0]['Name'] if live else '(nothing)'}")
+        print(f"  {ok}/{len(TYPOS)} typos fixed")
 
 
 if __name__ == "__main__":

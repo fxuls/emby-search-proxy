@@ -9,6 +9,7 @@
     build: /home/mc/homelab/emby-search-proxy/searchfix
     image: emby-searchfix:local
     container_name: emby-searchfix
+    user: "1000:1000"            # mc: owns the data dir, so the Telegram bot can read the search log
     environment:
       - EMBY_UPSTREAM=http://emby:8096
       - CANDIDATE_POOL=150
@@ -17,7 +18,7 @@
     env_file:
       - /home/mc/homelab/emby-search-proxy/.env   # EMBY_API_KEY, not in git
     volumes:
-      - searchfix-data:/data                      # people-count snapshot
+      - /home/mc/docker/emby/searchfix-data:/data   # library index snapshot + searches.db
     networks:
       default:
         aliases: [searchfix]
@@ -46,6 +47,3 @@
       driver: json-file
       options: { max-size: "5m", max-file: "3" }
 
-# plus, at top level of the compose file:
-# volumes:
-#   searchfix-data:

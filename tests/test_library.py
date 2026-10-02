@@ -9,21 +9,23 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "searchfix"))
 import rank  # noqa: E402
-from people import PeopleCounts  # noqa: E402
+from library import LibraryIndex  # noqa: E402
 
+STAR = {"Id": "p_star", "Name": "Star Person"}
 LIBRARY = {
     "Movie": [
-        {"Id": "m1", "People": [{"Id": "p_star"}, {"Id": "p_extra"}]},
-        {"Id": "m2", "People": [{"Id": "p_star"}]},
-        {"Id": "m3", "People": [{"Id": "p_star"}, {"Name": "no id"}]},
+        {"Id": "m1", "Name": "Movie One", "People": [STAR, {"Id": "p_extra", "Name": "Extra"}]},
+        {"Id": "m2", "Name": "Movie Two", "People": [STAR]},
+        {"Id": "m3", "Name": "Movie Three", "People": [STAR, {"Name": "no id"}]},
     ],
-    "Series": [{"Id": "s1", "People": [{"Id": "p_star"}]}],
+    "Series": [{"Id": "s1", "Name": "Show One", "People": [STAR]}],
     "Episode": [  # 3 guest spots on one show = 1 title; star already credited on s1
-        {"Id": "e1", "SeriesId": "s2", "People": [{"Id": "p_guest"}]},
-        {"Id": "e2", "SeriesId": "s2", "People": [{"Id": "p_guest"}]},
-        {"Id": "e3", "SeriesId": "s2", "People": [{"Id": "p_guest"}]},
-        {"Id": "e4", "SeriesId": "s1", "People": [{"Id": "p_star"}]},
+        {"Id": "e1", "Name": "Ep", "SeriesId": "s2", "People": [{"Id": "p_guest", "Name": "Guest"}]},
+        {"Id": "e2", "Name": "Ep", "SeriesId": "s2", "People": [{"Id": "p_guest", "Name": "Guest"}]},
+        {"Id": "e3", "Name": "Ep", "SeriesId": "s2", "People": [{"Id": "p_guest", "Name": "Guest"}]},
+        {"Id": "e4", "Name": "Ep", "SeriesId": "s1", "People": [STAR]},
     ],
+    "BoxSet": [{"Id": "b1", "Name": "Movie Collection"}],
 }
 
 
@@ -43,7 +45,7 @@ class FakeEmby(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-class PeopleCountsTest(unittest.TestCase):
+class LibraryIndexTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeEmby)
@@ -59,7 +61,7 @@ class PeopleCountsTest(unittest.TestCase):
         self.snap = os.path.join(self.tmp, "people.json")
 
     def make(self):
-        return PeopleCounts(self.url, "KEY", self.snap, log=lambda m: None)
+        return LibraryIndex(self.url, "KEY", self.snap, log=lambda m: None)
 
     def test_not_ready_until_built(self):
         pc = self.make()
@@ -74,13 +76,31 @@ class PeopleCountsTest(unittest.TestCase):
         self.assertEqual(pc.get("p_extra"), 1)
         self.assertEqual(pc.get("unknown"), 0)
         self.assertEqual(FakeEmby.calls[-1]["api_key"], "KEY")
-        self.assertEqual(FakeEmby.calls[-1]["Fields"], "People")
+        self.assertEqual(FakeEmby.calls[0]["Fields"], "People")
+
+    def test_names_cover_titles_collections_and_people_not_episodes(self):
+        pc = self.make()
+        pc.build()
+        names = {(t, n) for _, t, n in pc.names}
+        self.assertIn(("Movie", "Movie One"), names)
+        self.assertIn(("Series", "Show One"), names)
+        self.assertIn(("BoxSet", "Movie Collection"), names)
+        self.assertIn(("Person", "Star Person"), names)
+        self.assertNotIn("Episode", {t for t, _ in names})
+
+    def test_on_build_callback(self):
+        pc = self.make()
+        seen = []
+        pc.on_build.append(lambda lib: seen.append(len(lib.names)))
+        pc.build()
+        self.assertEqual(len(seen), 1)
 
     def test_snapshot_round_trip(self):
         self.make().build()
         pc2 = self.make()  # no build: loads the snapshot
         self.assertTrue(pc2.ready)
         self.assertEqual(pc2.get("p_star"), 4)
+        self.assertIn(("b1", "BoxSet", "Movie Collection"), pc2.names)
 
     def test_corrupt_snapshot_ignored(self):
         with open(self.snap, "w") as f:

@@ -35,9 +35,10 @@ Emby → Settings → API Keys). Never commit it.
 
 ## Cutover / rollback
 
-Scripted in `scripts/cutover.sh`. It works from the staged file
-`~/docker/emby/docker-compose.searchproxy.yml` and the backup
-`~/docker/emby/docker-compose.yml.pre-searchproxy.bak`.
+Scripted in `scripts/cutover.sh`. Rollback needs only the backup
+`~/docker/emby/docker-compose.yml.pre-searchproxy.bak`, the compose file from before the proxy.
+The staged cutover file was removed after the 2026-09-30 cutover. To cut over
+again after a rollback, recreate it from the live file plus `deploy/compose-services.yml`.
 
 ```bash
 EMBY_API_KEY=<key> scripts/cutover.sh              # dry run: validates everything, shows who is playing
@@ -74,13 +75,21 @@ Emergency: if nginx is wedged and you can't think, `docker restart emby-proxy`.
 | Remote playback errors | Not this proxy first: see gotchas.md "socat relay drops long connections". Then `docker logs emby-proxy` |
 | Dashboard shows every client at 172.x | `ProxyHeaderMode` got reset. Set *Read proxy headers* to Yes |
 
+## Search log
+
+- File: `~/docker/emby/searchfix-data/searches.db` (owned by mc). Telegram: `/searches`,
+  `/searches 30`, `/searches alexis`.
+- Ad hoc: `sqlite3 -readonly ~/docker/emby/searchfix-data/searches.db "select datetime(ts,'unixepoch','localtime'), user_name, client, device, term, top_name from searches order by ts desc limit 20"`
+  (no sqlite3 CLI on the host: use `python3 -c` with `sqlite3.connect(...?mode=ro, uri=True)`).
+- Test traffic: send header `X-Searchfix-Test: 1` (smoke.py/eval.py do) or it lands in the log.
+
 ## People signal
 
 - Key: `.env` → `EMBY_API_KEY` (Emby API key "custom-search"). `chmod 600`, git-ignored.
   To rotate: create a new key in Emby → Settings → API Keys, edit `.env`,
   `cd ~/docker/emby && docker compose up -d searchfix`.
-- Status: `docker exec emby-searchfix wget -qO- http://127.0.0.1:8080/health` → `ok people=69750`.
-  `docker logs emby-searchfix | grep people:` shows builds, snapshot loads and failures.
+- Status: `docker exec emby-searchfix wget -qO- http://127.0.0.1:8080/health` → `ok people=69768 fuzzy=72508 searchlog=on`.
+  `docker logs emby-searchfix | grep -E 'library:|fuzzy:'` shows index builds, snapshot loads and failures.
 - Force a rebuild now: `docker restart emby-searchfix`. It loads the snapshot, then
   rebuilds when the snapshot is ≥6 h old; delete the volume file first to force it immediately.
 - If Emby is down during a refresh, the old table is kept and it retries every 10 min.
@@ -105,6 +114,8 @@ prefixes the project name). A bare `searchfix-data` silently creates an empty on
 | env `CANDIDATE_POOL` | items fetched from Emby before trimming | 150 |
 | env `UPSTREAM_TIMEOUT` | seconds to wait for Emby | 30 |
 | env `LOG_SEARCH_TERMS` | `0` logs `term='-'` instead of the search text | 1 |
-| env `PEOPLE_REFRESH_HOURS` | how often person title counts are rebuilt | 6 |
+| env `PEOPLE_REFRESH_HOURS` | how often the library index (counts + names) is rebuilt | 6 |
+| env `FUZZY` | `0` turns typo matching off | 1 |
+| `fuzzy.py` | `MIN_SCORE`, `CANDIDATES` | 0.82, 150 |
 | `rank.py` | `PERSON_BONUS_PER_DOUBLING`, `PERSON_BONUS_MAX` | 2, 6 |
 | `rank.py` | `REPEAT_STEP`, `FREE_REPEATS`, `PARTIAL_WORD_PENALTY` | 2, 3, 2 |

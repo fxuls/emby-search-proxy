@@ -37,7 +37,7 @@ def get(path, params=None, headers=None, key=True):
     if key:
         params["api_key"] = KEY
     url = f"{BASE}/emby{path}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(url, headers=headers or {})
+    req = urllib.request.Request(url, headers={"X-Searchfix-Test": "1", **(headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, r.headers, r.read()

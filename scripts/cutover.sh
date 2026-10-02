@@ -64,10 +64,12 @@ rollback() {
 }
 
 # ---------------------------------------------------------------- checks
-[ -f "$STAGED" ] || { echo "missing $STAGED"; exit 1; }
 [ -f "$BACKUP" ] || { echo "missing $BACKUP"; exit 1; }
 
 if [ "$MODE" = rollback ]; then rollback; exit 0; fi
+# --apply/dry run need the staged file; it was removed after the 2026-09-30
+# cutover (the live compose file is the source of truth now).
+[ -f "$STAGED" ] || { echo "missing $STAGED (only needed to cut over again)"; exit 1; }
 
 (cd "$EMBY_DIR" && docker compose -f "$STAGED" config -q) && say "staged compose file valid"
 (cd "$REPO" && python3 -W ignore -m unittest discover -s tests >/dev/null 2>&1) && say "unit tests pass"

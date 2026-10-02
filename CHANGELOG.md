@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.6.0 — 2026-10-01
+- **Search log** (`searchfix/searchlog.py`): one SQLite row per search in
+  `~/docker/emby/searchfix-data/searches.db`. It records user, app, app version,
+  device, IP, final term, result count, top result and whether fuzzy fired.
+  Typing/backspacing on one device within 20 s folds into one row holding the
+  final term. Background writer, WAL mode, 365-day retention. Requests with
+  `X-Searchfix-Test` (smoke/eval) are not logged.
+- **Telegram `/searches`** (homelab bot): latest searches, `/searches 30`,
+  `/searches <user>`.
+- **Fuzzy search** (`searchfix/fuzzy.py`): only when nothing in Emby's
+  results matches the whole query. Trigram candidates, then word-level
+  similarity. Matches move or are fetched (by Id, **with the user's own
+  credentials**, so access rules hold) to the front of mixed lists.
+  30/30 typo checks; lookup median 12–16 ms, worst ~30 ms; zero cost for
+  ordinary searches. Response header `X-Searchfix: items fuzzy`.
+- People are fetched separately by Id: Emby drops them from mixed-type Ids queries.
+- Deterministic candidate tie-break (an earlier build depended on the
+  process's hash seed: "matrx" found The Matrix in some processes only).
+  Names are also indexed without a leading article.
+- `people.py` → `library.py` (`LibraryIndex`): the same background scan now
+  also collects names (movies, series, collections, credited people) for fuzzy.
+  Snapshot `library_index.json`.
+- Data moved from the Docker volume to the host dir
+  `~/docker/emby/searchfix-data` (container runs as uid 1000) so the bot can read it.
+- eval.py: 28 live typo checks; live comparison skips fuzzy responses.
+
 ## 1.5.0 — 2026-10-01
 Measured with scripts/eval.py (400 targets, 1,288 queries, 26 checks) against
 1.4.1: hit@1 58.9% → 61.7%, @3 75.8% → 79.6%, @10 88.9% → 93.9%, MRR

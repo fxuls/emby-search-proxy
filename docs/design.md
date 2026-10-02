@@ -139,6 +139,39 @@ library was 10–300 ms per search.
 - Other endpoints carrying `SearchTerm` (`/Persons`, `/Artists`, `/Genres`…)
   are proxied unchanged. `/Search/Hints` returns `[]` on Emby 4.10 (retired).
 
+## Fuzzy search (1.6.0)
+
+**When:** a mixed list (Top Results, side-menu search; never a single-type row)
+where no title, collection or person in Emby's results matches the whole query
+(`fuzzy.has_whole_query_match`). Emby ORs words, so "harry poter" returns 134
+Harrys, none matching both words. Ordinary and half-typed searches ("harry
+pot") never trigger it.
+
+**How:** query letter trigrams → the 150 names sharing the most (ties: most
+similar trigram set, then index order, which keeps it deterministic) → each
+query word scored against the closest word of the name (difflib), so long
+titles aren't penalised and "rngs" ≈ "rings". Matches scoring ≥ 0.82 go to the
+front. Ones Emby already returned are moved; others are fetched by Id **using
+the searching user's credentials**, so Emby's library access and parental
+controls decide what appears. People need a separate fetch with
+`IncludeItemTypes=Person`.
+
+**Cost (measured 2026-10-01):** index of 72.5k names, ~1 s to build in the
+background, ~70 MB. Lookup median 12–16 ms, worst ~30 ms, plus one Ids fetch.
+Ordinary searches pay one in-memory check (microseconds). For comparison,
+Emby's own search takes 200–600 ms for multi-word queries.
+
+## Search log (1.6.0)
+
+`searches.db` (SQLite, WAL) in the bind-mounted data dir. One row per search:
+time, user, app/client, app version, device, device id, IP (from nginx's
+`X-Real-IP`), final term, candidate count, top result, fuzzy flag. A search
+page fires several requests, and some apps search per keystroke, so requests
+from one device are folded into the previous row while the term keeps
+extending or shrinking within 20 s. Writes are queued to a background thread.
+Retention 365 days. Smoke/eval send `X-Searchfix-Test` and are not logged.
+Remote users' IP is the Docker bridge (the socat relay hides it).
+
 ## Failure modes
 
 | Failure | Effect |
@@ -147,6 +180,7 @@ library was 10–300 ms per search.
 | Re-ranking throws (unexpected JSON etc.) | Emby's response served unmodified (trimmed to `Limit`) |
 | Emby down | 502, same as before (Telegram bot alerts; it pings `:8096` through the proxy) |
 | nginx down | **Emby unreachable on :8096.** Mitigations: `restart: unless-stopped`, healthcheck, bot alert; rollback in runbook |
+| fuzzy index or search log unavailable | ranking continues without it; health shows `fuzzy=off` / `searchlog=off` |
 | emby/searchfix recreated with a new IP | nginx re-resolves container names every 10 s (`resolver 127.0.0.11`, `server … resolve`) |
 | Long paused direct-play stream | `send_timeout`/`proxy_*_timeout` 3600 s + TCP keepalive; verified a 100 s stall resumes |
 
