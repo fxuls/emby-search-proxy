@@ -67,10 +67,23 @@ FREE_REPEATS = 3
 
 # People credited in more titles in the library rank higher among people:
 # bonus = -PERSON_BONUS_PER_DOUBLING per doubling of titles, capped at
-# PERSON_BONUS_MAX (1 title: 0, 2: -2, 4: -4, 8+: -6). Always smaller than the
-# 10-point gap between match tiers, so it never jumps a match level.
+# PERSON_BONUS_MAX (1 title: 0, 2: -2, 4+: -4). Always smaller than the
+# 10-point gap between match tiers, so it never jumps a match level, and
+# capped at 4 (2026-10-01, user choice "A") so a prolific person whose name
+# starts with the query (10+16-4=22) stays below a movie where the query is a
+# later word (20+1=21): people never jump the user's type order for movies.
 PERSON_BONUS_PER_DOUBLING = 2
-PERSON_BONUS_MAX = 6
+PERSON_BONUS_MAX = 4
+
+# "global": the bonus changes a person's score against every type.
+# "within": it only reorders people among themselves; against other types a
+# person competes with its plain score, so the user's type order holds.
+PERSON_BONUS_MODE = "global"
+
+# A query of 2+ words that exactly matches an item's name ("eddie murphy",
+# "office olympics") is a deliberate lookup: cap that item's type penalty at
+# this value so it can come first. None = off. Tags never get the cap.
+EXACT_PHRASE_PENALTY_CAP = None
 
 # Matching on OriginalTitle/SortName, or on the query without its leading
 # article, is slightly weaker evidence than matching the display name.
@@ -124,7 +137,8 @@ def person_bonus(titles):
     return -min(PERSON_BONUS_MAX, PERSON_BONUS_PER_DOUBLING * math.log2(titles))
 
 
-def score(item, q, q_bare, person_titles=None):
+def score_parts(item, q, q_bare, person_titles=None):
+    """(score used against other types, score used within the item's type)."""
     best = NO_MATCH
     for field, extra in (("Name", 0), ("OriginalTitle", ALT_FIELD_PENALTY),
                          ("SortName", ALT_FIELD_PENALTY)):
@@ -133,10 +147,22 @@ def score(item, q, q_bare, person_titles=None):
             t = match_tier(name, query)
             if t is not None:
                 best = min(best, t + extra + qextra)
-    total = best + TYPE_PENALTY.get(item.get("Type"), DEFAULT_PENALTY)
-    if person_titles is not None and item.get("Type") == "Person":
-        total += person_bonus(person_titles(item.get("Id")))
-    return total
+    type_ = item.get("Type")
+    penalty = TYPE_PENALTY.get(type_, DEFAULT_PENALTY)
+    if (EXACT_PHRASE_PENALTY_CAP is not None and best == EXACT and type_ != "Tag"
+            and len(q.split()) >= 2):
+        penalty = min(penalty, EXACT_PHRASE_PENALTY_CAP)
+    total = best + penalty
+    bonus = 0
+    if person_titles is not None and type_ == "Person":
+        bonus = person_bonus(person_titles(item.get("Id")))
+    if PERSON_BONUS_MODE == "within":
+        return total, total + bonus
+    return total + bonus, total + bonus
+
+
+def score(item, q, q_bare, person_titles=None):
+    return score_parts(item, q, q_bare, person_titles)[0]
 
 
 def repeat_penalty(type_, n_already):
@@ -156,13 +182,15 @@ def rerank(items, term, person_titles=None):
     """
     q = norm(term)
     q_bare = _ARTICLE.sub("", q)
+    # queue entries: (within-type key, original index, cross-type score)
     queues = {}
     for i, it in enumerate(items):
-        queues.setdefault(it.get("Type"), []).append((score(it, q, q_bare, person_titles), i))
+        cross, within = score_parts(it, q, q_bare, person_titles)
+        queues.setdefault(it.get("Type"), []).append((within, i, cross))
     for qu in queues.values():
         qu.sort()
     taken = dict.fromkeys(queues, 0)
-    heap = [(sc + repeat_penalty(t, 0), sc, i, t) for t, qu in queues.items() for sc, i in qu[:1]]
+    heap = [(sc + repeat_penalty(t, 0), sc, i, t) for t, qu in queues.items() for _, i, sc in qu[:1]]
     heapq.heapify(heap)
     out = []
     while heap:
@@ -171,7 +199,7 @@ def rerank(items, term, person_titles=None):
         taken[t] += 1
         qu = queues[t]
         if taken[t] < len(qu):
-            sc, j = qu[taken[t]]
+            _, j, sc = qu[taken[t]]
             heapq.heappush(heap, (sc + repeat_penalty(t, taken[t]), sc, j, t))
     return out
 

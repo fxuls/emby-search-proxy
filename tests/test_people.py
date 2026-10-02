@@ -95,14 +95,21 @@ class PersonBonusTest(unittest.TestCase):
         self.assertEqual(rank.person_bonus(1), 0)
         self.assertEqual(rank.person_bonus(2), -2)
         self.assertEqual(rank.person_bonus(4), -4)
-        self.assertEqual(rank.person_bonus(8), -6)
-        self.assertEqual(rank.person_bonus(500), -6)
+        self.assertEqual(rank.person_bonus(8), -4)
+        self.assertEqual(rank.person_bonus(500), -4)
+
+    def test_famous_person_stays_below_later_word_movie(self):
+        # 2026-10-01 decision A: Harry Shearer must not outrank "Dirty Harry"
+        items = [{"Type": "Person", "Id": "shearer", "Name": "Harry Shearer"},
+                 {"Type": "Movie", "Id": "m", "Name": "Dirty Harry"}]
+        out = rank.rerank(items, "harry", {"shearer": 500}.get)
+        self.assertEqual([i["Type"] for i in out], ["Movie", "Person"])
 
     def test_bonus_never_jumps_a_match_level(self):
         self.assertLess(rank.PERSON_BONUS_MAX, rank.PREFIX - rank.EXACT)
 
     def test_prolific_people_lead_the_people_block(self):
-        counts = {"a": 1, "b": 6, "c": 1, "d": 12}
+        counts = {"a": 1, "b": 2, "c": 1, "d": 12}
         people = [{"Type": "Person", "Id": i, "Name": f"Harry {i.upper()}"} for i in "abcd"]
         out = [p["Id"] for p in rank.rerank(people, "harry", counts.get)]
         self.assertEqual(out, ["d", "b", "a", "c"])

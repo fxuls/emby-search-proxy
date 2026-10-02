@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.1 — 2026-10-01
+- Person bonus capped at −4 (user decision "A"): a prolific person whose name
+  starts with the query no longer outranks a movie where it is a later word
+  (Harry Shearer below *Dirty Harry*).
+- `scripts/eval.py`: search-quality evaluation. Samples ~400 real library
+  targets, builds ~1,300 realistic queries (full title, first word, first 4
+  letters…), compares stock Emby vs rank.py, runs 26 expectation checks and
+  scores weight variants offline. `--live` checks the live proxy matches rank.py.
+- rank.py gains `PERSON_BONUS_MODE` and `EXACT_PHRASE_PENALTY_CAP` (both off by
+  default; ranking unchanged) for the evaluation to try.
+
 ## 1.4.0 — 2026-10-01
 - People signal: people credited in more library titles rank higher. A bonus
   of −2 per doubling of titles, capped at −6 (1 title: 0, 2: −2, 4: −4, 8+: −6).

@@ -85,6 +85,18 @@ Emergency: if nginx is wedged and you can't think, `docker restart emby-proxy`.
   rebuilds when the snapshot is ≥6 h old; delete the volume file first to force it immediately.
 - If Emby is down during a refresh, the old table is kept and it retries every 10 min.
 
+## Measuring search quality
+
+```bash
+cd ~/homelab/emby-search-proxy
+docker run --rm --network emby_default -v $PWD:/repo:ro -v emby_searchfix-data:/data:ro \
+  -e EMBY_API_KEY=<key> -e EMBY_USER_ID=<admin user id> \
+  python:3.12-alpine python /repo/scripts/eval.py --n 400 --variants --live
+```
+Run it before and after any weight change; add a CASES entry for every
+"search looks wrong" report. The volume is `emby_searchfix-data` (compose
+prefixes the project name). A bare `searchfix-data` silently creates an empty one.
+
 ## Tuning knobs
 
 | Where | Knob | Default |
