@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.5.0 — 2026-10-01 (branch tune-1.5, pending approval)
+## 1.5.0 — 2026-10-01
 Measured with scripts/eval.py (400 targets, 1,288 queries, 26 checks) against
 1.4.1: hit@1 58.9% → 61.7%, @3 75.8% → 79.6%, @10 88.9% → 93.9%, MRR
 0.688 → 0.722, checks 20/26 → 26/26 (stock Emby: 42.7% / 55.4% / 71.7%).
