@@ -62,7 +62,12 @@ with the rank number drawn on the copy's poster. Opening a card there opened the
 copy, so the number showed on the detail page too, and an app holding an older
 row got "item not found" once the plugin rebuilt its copies.
 
-searchfix now rewrites home rows (`/Users/{id}/Sections/{id}/Items`):
+**Status (1.8.3): the home-row rewrite is OFF.** On real devices the Android TV
+app cached the swapped item by Id and lost the rank numbers, and iOS home rows
+failed to load. What's still active is the search swap and the hidden copy
+version below. The original design, kept in `toplist.py`:
+
+searchfix rewrote home rows (`/Users/{id}/Sections/{id}/Items`):
 
 - **On a top-list row** each copy becomes the real title, but the card keeps
   the numbered poster: its image tag (`hsc<copyId>_<tag>`) is routed back to
