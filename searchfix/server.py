@@ -396,6 +396,9 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(body)
             if not toplist.strip_copy_sources(data, lambda i: COPIES.original(i) is not None):
                 return self.send(status, headers, body)
+            kind = "play " if self.path.lower().split("?")[0].endswith("/playbackinfo") else "item "
+            log(f"{kind} client={self.client_name()!r} id={self.path.split('?')[0].rstrip('/').split('/')[-1 if kind == 'item ' else -2]} "
+                f"copy version hidden")
             out = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
             return self.send(status, headers, out, extra=[("X-Searchfix", "item")])
         except Exception as e:  # never break a detail page: serve what Emby gave us
