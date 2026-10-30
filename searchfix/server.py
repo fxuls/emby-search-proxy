@@ -170,7 +170,7 @@ class Handler(BaseHTTPRequestHandler):
         return "?"
 
     def request_body(self):
-        """The client's request body, read once (Content-Length or chunked)."""
+        """This request's body, read once (Content-Length or chunked)."""
         if not hasattr(self, "_body"):
             body = None
             if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
@@ -406,6 +406,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(status, headers, body)
 
     def handle_any(self):
+        # One handler serves every request on a kept-alive connection: forget the
+        # previous request's body, or this one's is never read (and is then parsed
+        # as the next request line: 501 "Unsupported method ('{}POST')").
+        self.__dict__.pop("_body", None)
         if self.path == "/health":
             people = f"people={len(PEOPLE)}" if PEOPLE and PEOPLE.ready else "people=off"
             fz = f"fuzzy={len(FUZZY)}" if FUZZY is not None else "fuzzy=off"

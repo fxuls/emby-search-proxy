@@ -361,6 +361,27 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(d["PlaySessionId"], "ps")
         self.assertEqual(FakeEmby.bodies, [profile])
 
+    def test_bodies_on_one_keepalive_connection(self):
+        # 2026-10-29: the body was cached per connection, so the 2nd POST reused the
+        # 1st body and its own was parsed as the next request line (501).
+        import http.client
+        FakeEmby.bodies.clear()
+        conn = http.client.HTTPConnection("127.0.0.1", self.fix.server_port, timeout=5)
+        statuses = []
+        for body in (b'{"n":1}', b'{"n":2}', b'{"n":3}'):
+            conn.request("POST", "/emby/Items/100/PlaybackInfo", body=body,
+                         headers={"Content-Type": "application/json"})
+            r = conn.getresponse()
+            r.read()
+            statuses.append(r.status)
+        conn.request("GET", "/emby/Users/u1/Items/100")
+        r = conn.getresponse()
+        r.read()
+        statuses.append(r.status)
+        conn.close()
+        self.assertEqual(statuses, [200, 200, 200, 200])
+        self.assertEqual(FakeEmby.bodies, [b'{"n":1}', b'{"n":2}', b'{"n":3}'])
+
     def test_playbackinfo_chunked_body_forwarded(self):
         import http.client
         FakeEmby.bodies.clear()

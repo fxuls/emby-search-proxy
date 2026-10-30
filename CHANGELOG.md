@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.8.4 — 2026-10-29
+- **Fix: request bodies on a kept-alive connection.** 1.8.2 cached the request
+  body on the handler, which Python keeps for the whole connection, so a second
+  POST on the same nginx→searchfix connection reused the first body and left its
+  own unread; that body was then parsed as the next request line (501
+  "Unsupported method ('{}POST')"). Affected PlaybackInfo (play start) between
+  1.8.2 and now. The body is now reset per request; regression test added.
+
 ## 1.8.3 — 2026-10-29
 - **Home-row rewrite turned off (nginx no longer routes `/Sections/{id}/Items`
   to searchfix).** Tested on real devices it broke: the Android TV app caches
