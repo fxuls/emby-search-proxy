@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.8.0 — 2026-10-29
+- **Top-list rows keep their numbers; everything else gets the real title**
+  (`searchfix/toplist.py`). Home Screen Companion's ranked rows are made of
+  `.strm` copies with the rank drawn into each copy's poster, so opening a card
+  opened the copy and its detail page showed the number. The copies also get new
+  ids whenever the plugin rebuilds them, so an app showing an older row got
+  "item not found" (seen on Android TV).
+- nginx now also sends home rows (`/Users/{u}/Sections/{id}/Items`) to searchfix.
+  On a top-list row (the section's library is one of the plugin's), each copy is
+  replaced by the real title, fetched with the user's own credentials, and its
+  Primary/Thumb tags become `hsc<copyId>_<tag>`. On other rows (Continue
+  Watching) a copy becomes the plain real title.
+- Image requests with an `hsc…` tag are routed to searchfix and served from the
+  copy. If the copy is gone, the real title's own poster is served instead.
+- The copy → title map (IMDb, else TMDb, per type) is rebuilt every 10 minutes
+  from Emby's library list (`TOPLIST_REFRESH_MINUTES`, `TOPLIST_ROWS=0` = off).
+  A user's section list is cached for 5 minutes. Fails open everywhere.
+
 ## 1.7.1 — 2026-10-01
 - Home Screen Companion's top-watched rows are built from `.strm` copies in
   `/config/plugins/HomeScreenCompanion/toplists/`. Accounts that can see them

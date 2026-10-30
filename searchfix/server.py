@@ -1,7 +1,10 @@
-"""searchfix: re-ranks Emby search responses.
+"""searchfix: re-ranks Emby search responses, and keeps HSC top-list copies
+on their home rows (toplist.py).
 
-nginx sends only requests that carry a SearchTerm query arg here; everything
-else goes straight to Emby. Of those, two shapes are rewritten:
+nginx sends three kinds of request here; everything else goes straight to Emby:
+  GET .../Users/{u}/Sections/{id}/Items   home rows: HSC copies -> real titles
+  GET .../Items/{id}/Images/...?tag=hsc…  numbered top-list posters
+  anything carrying a SearchTerm query arg, of which two shapes are rewritten:
 
   GET .../ItemTypes?SearchTerm=...   rows reordered (rank.order_types)
   GET .../Items?SearchTerm=...       bigger candidate pool fetched from Emby,
@@ -35,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import expand
 import fuzzy
 import rank
+import toplist
 from rank import drop_hsc_copies  # noqa: F401  (re-exported for tests)
 from library import LibraryIndex
 from searchlog import SearchLog, UserNames, parse_auth, user_id_from
@@ -59,6 +63,12 @@ PEOPLE = None      # LibraryIndex: person title counts + names
 FUZZY = None       # FuzzyIndex, rebuilt whenever PEOPLE rebuilds
 EXPANDER = None    # expand.Expander (rare misspelled word -> also search the common word)
 SEARCHLOG = None
+# HSC top-list rows (toplist.py): needs EMBY_API_KEY to map copies to originals.
+TOPLIST_ENABLED = os.environ.get("TOPLIST_ROWS", "1") == "1"
+TOPLIST_REFRESH_MINUTES = float(os.environ.get("TOPLIST_REFRESH_MINUTES", "10"))
+COPIES = None      # toplist.CopyMap
+SECTION_TTL = 300
+_SECTIONS = {}     # user id -> (monotonic time, {section id: parent library id})
 
 # Presentation params copied from the client's request when fetching fuzzy
 # matches by Id, so they come back in the same shape as the rest of the list.
@@ -263,16 +273,84 @@ class Handler(BaseHTTPRequestHandler):
         seen = set(head_ids)
         return [by_id[i] for i in head_ids], [i for i in items if i.get("Id") not in seen]
 
+    def section_parent(self, prefix, uid, sid, pairs):
+        """The library a home section shows (its ParentItem), "" if none, None if unknown."""
+        now = time.monotonic()
+        hit = _SECTIONS.get(uid)
+        if hit is None or now - hit[0] > SECTION_TTL or sid not in hit[1]:
+            auth = [(k, v) for k, v in pairs if k.lower() == "api_key" or k.lower().startswith("x-emby-")]
+            st, _, b = self.fetch(f"{prefix}/Users/{uid}/HomeSections?{urllib.parse.urlencode(auth)}")
+            if st == 200:
+                d = json.loads(b)
+                rows = d if isinstance(d, list) else d.get("Items", [])
+                hit = (now, {s.get("Id"): (s.get("ParentItem") or {}).get("Id") or s.get("ParentId") or ""
+                             for s in rows})
+                _SECTIONS[uid] = hit
+        return hit[1].get(sid) if hit else None
+
+    def handle_section(self, prefix, uid, sid, pairs):
+        """A home row: HSC copies become their real titles (toplist.py)."""
+        try:
+            status, headers, body = self.fetch(self.path)
+        except (urllib.error.URLError, OSError) as e:
+            log(f"upstream error {e!r} for section {sid}")
+            return self.send(502, [("Content-Type", "text/plain")], b"emby unreachable\n")
+        if status != 200:
+            return self.send(status, headers, body)
+        try:
+            data = json.loads(body)
+            items = data.get("Items") or []
+            ids = [COPIES.original(i.get("Id")) for i in items]
+            wanted = sorted({i for i in ids if i})
+            if not wanted:
+                return self.send(status, headers, body)
+            parent = self.section_parent(prefix, uid, sid, pairs)
+            numbered = (parent in COPIES.libraries) if parent is not None else all(ids)
+            keep = [(k, v) for k, v in pairs
+                    if k.lower() in ID_FETCH_KEEP or k.lower().startswith("x-emby-")]
+            qs = urllib.parse.urlencode(keep + [("Ids", ",".join(wanted))])
+            st, _, b = self.fetch(f"{prefix}/Users/{uid}/Items?{qs}")
+            originals = {i.get("Id"): i for i in json.loads(b).get("Items", [])} if st == 200 else {}
+            data["Items"] = toplist.swap_items(items, COPIES.original, originals, numbered)
+            log(f"row   client={self.client_name()!r} section={sid} numbered={numbered} "
+                f"copies={len(wanted)} swapped={len(originals)}")
+            out = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+            return self.send(status, headers, out, extra=[("X-Searchfix", "row")])
+        except Exception as e:  # never break the home screen: serve what Emby gave us
+            log(f"row rewrite failed ({e!r}) for section {sid}")
+            return self.send(status, headers, body)
+
+    def handle_hsc_image(self, path, copy_pairs, plain_pairs):
+        """A numbered top-list poster: served from the copy. If HSC has rebuilt the
+        copy since the row was loaded, the real title's own image instead."""
+        try:
+            status, headers, body = self.fetch(path + "?" + urllib.parse.urlencode(copy_pairs))
+            if status >= 400:   # Emby answers 500 for an image of a deleted item
+                own = urllib.parse.urlsplit(self.path).path
+                status, headers, body = self.fetch(own + "?" + urllib.parse.urlencode(plain_pairs))
+        except (urllib.error.URLError, OSError) as e:
+            log(f"upstream error {e!r} for image {path}")
+            return self.send(502, [("Content-Type", "text/plain")], b"emby unreachable\n")
+        return self.send(status, headers, body)
+
     def handle_any(self):
         if self.path == "/health":
             people = f"people={len(PEOPLE)}" if PEOPLE and PEOPLE.ready else "people=off"
             fz = f"fuzzy={len(FUZZY)}" if FUZZY is not None else "fuzzy=off"
             sl = "searchlog=on" if SEARCHLOG else "searchlog=off"
-            return self.send(200, [("Content-Type", "text/plain")], f"ok {people} {fz} {sl}\n".encode())
+            tl = f"toplist={len(COPIES)}" if COPIES and COPIES.ready else "toplist=off"
+            return self.send(200, [("Content-Type", "text/plain")], f"ok {people} {fz} {sl} {tl}\n".encode())
 
         parsed = urllib.parse.urlsplit(self.path)
         pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
         params = {k.lower(): v for k, v in pairs}
+
+        img = toplist.image_target(self.command, parsed.path, pairs)
+        if img:
+            return self.handle_hsc_image(*img)
+        sec = toplist.section_request(self.command, parsed.path)
+        if sec and COPIES is not None and COPIES.ready:
+            return self.handle_section(*sec, pairs)
         mode = classify(self.command, parsed.path, params)
 
         start = limit = 0
@@ -393,7 +471,7 @@ def _rebuild_fuzzy(lib):
 
 
 def main():
-    global PEOPLE, SEARCHLOG
+    global PEOPLE, SEARCHLOG, COPIES
     if API_KEY:
         PEOPLE = LibraryIndex(UPSTREAM, API_KEY, PEOPLE_SNAPSHOT, PEOPLE_REFRESH_HOURS, log)
         if FUZZY_ENABLED:
@@ -401,6 +479,8 @@ def main():
         PEOPLE.start()
     else:
         log("library: EMBY_API_KEY not set, people signal and fuzzy search off")
+    if API_KEY and TOPLIST_ENABLED:
+        COPIES = toplist.CopyMap(UPSTREAM, API_KEY, TOPLIST_REFRESH_MINUTES, log).start()
     try:
         SEARCHLOG = SearchLog(SEARCH_DB, UserNames(UPSTREAM, API_KEY), log).start()
     except Exception as e:

@@ -54,13 +54,35 @@ Every search is also **logged** (who, when, app, device, term, top result) to
 `~/docker/emby/searchfix-data/searches.db`. Read it from Telegram with
 `/searches`.
 
+### Home Screen Companion top-lists
+
+The [Home Screen Companion](https://github.com/soderlund91/HomeScreenCompanion)
+plugin builds ranked rows ("Top 10 this week") from hidden copies of each title,
+with the rank number drawn on the copy's poster. Opening a card there opened the
+copy, so the number showed on the detail page too, and an app holding an older
+row got "item not found" once the plugin rebuilt its copies.
+
+searchfix now rewrites home rows (`/Users/{id}/Sections/{id}/Items`):
+
+- **On a top-list row** each copy becomes the real title, but the card keeps
+  the numbered poster: its image tag (`hsc<copyId>_<tag>`) is routed back to
+  the copy's image. Tapping it opens the real title, with its own poster.
+- **On any other row** (Continue Watching, ...) a copy is shown as the real title.
+
+The copy → title map is rebuilt every 10 minutes (`TOPLIST_REFRESH_MINUTES`) from
+the libraries whose folder is under the plugin's directory. Needs `EMBY_API_KEY`;
+`TOPLIST_ROWS=0` turns it off. Code: `searchfix/toplist.py`.
+
 ## Safety properties
 
-- **Only searches are touched.** Streaming, images, logins, websockets and the
-  rest of the API bypass the Python service entirely.
+- **Only searches, home rows and numbered top-list posters are touched.**
+  Streaming, other images, logins, websockets and the rest of the API bypass
+  the Python service entirely.
 - **Fails open.** If searchfix is down, nginx sends the search straight to
   Emby, so users just get Emby's normal ordering. If re-ranking hits any
-  error, Emby's response is served unmodified.
+  error, Emby's response is served unmodified. The same goes for home rows; a
+  numbered poster then falls back to the title's own poster (Emby ignores the
+  unknown tag).
 - **Respects real sort choices.** The default alphabetical sort that apps add
   to search rows is replaced by relevance. Any other sort (date added,
   rating, random) passes through unchanged. Paged results are slices of one
@@ -77,6 +99,7 @@ Every search is also **logged** (who, when, app, device, term, top result) to
 | `searchfix/fuzzy.py` | Typo-tolerant lookup, used only when nothing matches the whole query |
 | `searchfix/expand.py` | Query expansion for rare misspelled words (hary → also harry) |
 | `searchfix/searchlog.py` | Search log writer (SQLite, one row per search) |
+| `searchfix/toplist.py` | Home rows: Home Screen Companion top-list copies → real titles, numbered posters kept |
 | `.env` | `EMBY_API_KEY` for the people signal. **Not in git** |
 | `searchfix/Dockerfile` | Image `emby-searchfix:local` |
 | `nginx/default.conf` | Front door on :8096, routing, timeouts, fallback |

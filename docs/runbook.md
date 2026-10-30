@@ -30,6 +30,13 @@ Emby → Settings → API Keys). Never commit it.
      ```bash
      docker exec emby-proxy nginx -t && docker exec emby-proxy nginx -s reload
      ```
+     Check first that the container sees the edit:
+     `docker exec emby-proxy grep -c '<new text>' /etc/nginx/conf.d/default.conf`.
+     `default.conf` is a single-file bind mount, so an editor that saves by
+     writing a new file (most do) leaves the container on the old copy, and
+     the reload changes nothing. Then the only way in is to recreate the
+     container (`docker compose up -d --force-recreate --no-deps emby-proxy`,
+     a ~2 s blip that drops active streams), so do it when nothing is playing.
 4. Verify: `EMBY_API_KEY=<key> scripts/smoke.py` (defaults to :8096).
 5. If the compose services changed, update `deploy/compose-services.yml` to match.
 
