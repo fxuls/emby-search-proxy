@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.8.1 — 2026-10-29
+- **Search shows the real title instead of a lone top-list copy.** Emby lists
+  merged versions once and sometimes picks Home Screen Companion's copy:
+  "Infinity War" returned only the numbered copy (17 of 169 top-list titles
+  did this). After ranking and paging, any copy whose real title isn't already
+  in the list is replaced by it, fetched with the user's own credentials
+  (`Server.swap_lone_copies`). Measured after deploy: 0 of 169.
+
 ## 1.8.0 — 2026-10-29
 - **Top-list rows keep their numbers; everything else gets the real title**
   (`searchfix/toplist.py`). Home Screen Companion's ranked rows are made of

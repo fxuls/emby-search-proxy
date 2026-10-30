@@ -113,6 +113,14 @@ def classify(method, path, params):
     return None
 
 
+def api_prefix(path):
+    """"/emby" or "" (or whatever comes before /Users/): where the API lives for this client."""
+    low = path.lower()
+    if "/users/" in low:
+        return path[:low.index("/users/")]
+    return "/emby" if low.startswith("/emby/") else ""
+
+
 def _int(v):
     try:
         return max(int(v), 0)
@@ -288,6 +296,30 @@ class Handler(BaseHTTPRequestHandler):
                 _SECTIONS[uid] = hit
         return hit[1].get(sid) if hit else None
 
+    def fetch_originals(self, prefix, uid, pairs, ids):
+        """Real titles by Id, as this user sees them, in the shape the client asked for."""
+        keep = [(k, v) for k, v in pairs
+                if k.lower() in ID_FETCH_KEEP or k.lower().startswith("x-emby-")]
+        qs = urllib.parse.urlencode(keep + [("Ids", ",".join(ids))])
+        st, _, b = self.fetch(f"{prefix}/Users/{uid}/Items?{qs}")
+        return {i.get("Id"): i for i in json.loads(b).get("Items", [])} if st == 200 else {}
+
+    def swap_lone_copies(self, path, params, pairs, items):
+        """Search: Emby lists merged versions once and sometimes picks the HSC copy
+        ("Infinity War" found only the numbered copy). Show the real title instead."""
+        if COPIES is None or not COPIES.ready:
+            return items
+        wanted = sorted({o for o in (COPIES.original(i.get("Id")) for i in items) if o})
+        uid = user_id_from(path, params)
+        if not wanted or not uid:
+            return items
+        try:
+            originals = self.fetch_originals(api_prefix(path), uid, pairs, wanted)
+            return toplist.swap_items(items, COPIES.original, originals, numbered=False)
+        except Exception as e:
+            log(f"search copy swap failed ({e!r})")
+            return items
+
     def handle_section(self, prefix, uid, sid, pairs):
         """A home row: HSC copies become their real titles (toplist.py)."""
         try:
@@ -306,11 +338,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(status, headers, body)
             parent = self.section_parent(prefix, uid, sid, pairs)
             numbered = (parent in COPIES.libraries) if parent is not None else all(ids)
-            keep = [(k, v) for k, v in pairs
-                    if k.lower() in ID_FETCH_KEEP or k.lower().startswith("x-emby-")]
-            qs = urllib.parse.urlencode(keep + [("Ids", ",".join(wanted))])
-            st, _, b = self.fetch(f"{prefix}/Users/{uid}/Items?{qs}")
-            originals = {i.get("Id"): i for i in json.loads(b).get("Items", [])} if st == 200 else {}
+            originals = self.fetch_originals(prefix, uid, pairs, wanted)
             data["Items"] = toplist.swap_items(items, COPIES.original, originals, numbered)
             log(f"row   client={self.client_name()!r} section={sid} numbered={numbered} "
                 f"copies={len(wanted)} swapped={len(originals)}")
@@ -431,7 +459,8 @@ class Handler(BaseHTTPRequestHandler):
                     head, items = self.fuzzy_head(items, params["searchterm"], parsed.path, pairs)
                     used_fuzzy = bool(head)
                 items = rank.drop_hsc_copies(head + rank.rerank(items, params["searchterm"], lookup, corrected))
-                data["Items"] = items[start:start + limit] if limit else items[start:]
+                page = items[start:start + limit] if limit else items[start:]
+                data["Items"] = self.swap_lone_copies(parsed.path, params, pairs, page)
             body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
             term = params["searchterm"] if LOG_TERMS else "-"
             log(f"{mode:5} client={self.client_name()!r} term={term!r} "

@@ -135,6 +135,10 @@ class FakeEmby(BaseHTTPRequestHandler):
             return self.reply(200, {"Items": [real_item("102", "Other")]})
         if p.endswith("/Sections/gone/Items"):
             return self.reply(500, b"NullReferenceException", "text/plain")
+        if p.endswith("/Items") and "SearchTerm" in q:
+            # Emby lists merged versions once and may pick the copy
+            return self.reply(200, {"Items": [copy_item("900", "Knives Out"), real_item("102", "Knives Out Too")],
+                                    "TotalRecordCount": 2})
         if p.endswith("/Items") and "Ids" in q:
             return self.reply(200, {"Items": [real_item(i, "real " + i) for i in q["Ids"].split(",")]})
         if p == "/emby/Items/900/Images/Primary":
@@ -263,6 +267,26 @@ class ServerTest(unittest.TestCase):
     def test_normal_image_passthrough(self):
         s, h, b = self.get("/emby/Items/100/Images/Primary?tag=rp")
         self.assertEqual(b, b"PLAIN tag=rp")
+
+    def test_search_lone_copy_becomes_real_title(self):
+        uid = "0123456789abcdef0123456789abcdef"
+        s, h, b = self.get(f"/emby/Users/{uid}/Items?SearchTerm=Knives&Recursive=true&Limit=10",
+                           {"X-Emby-Token": "usertoken"})
+        items = json.loads(b)["Items"]
+        self.assertEqual(sorted(i["Id"] for i in items), ["100", "102"])
+        self.assertEqual([i for i in items if i["Id"] == "100"][0]["ImageTags"]["Primary"], "rp")
+        ids_call = [p for p, hd in FakeEmby.seen if "Ids=" in p][0]
+        self.assertTrue(urllib.parse.urlsplit(ids_call).path.endswith(f"/emby/Users/{uid}/Items"))
+
+    def test_search_without_user_leaves_copy(self):
+        s, h, b = self.get("/emby/Items?SearchTerm=Knives&Recursive=true&Limit=10")
+        self.assertIn("900", [i["Id"] for i in json.loads(b)["Items"]])
+
+    def test_api_prefix(self):
+        self.assertEqual(self.server_mod.api_prefix("/emby/Users/abc/Items"), "/emby")
+        self.assertEqual(self.server_mod.api_prefix("/Users/abc/Items"), "")
+        self.assertEqual(self.server_mod.api_prefix("/emby/Items"), "/emby")
+        self.assertEqual(self.server_mod.api_prefix("/Items"), "")
 
     def test_rows_untouched_until_map_ready(self):
         saved = self.server_mod.COPIES
