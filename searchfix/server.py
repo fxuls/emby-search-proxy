@@ -4,6 +4,8 @@ on their home rows (toplist.py).
 nginx sends three kinds of request here; everything else goes straight to Emby:
   GET .../Users/{u}/Sections/{id}/Items   home rows: HSC copies -> real titles
   GET .../Items/{id}/Images/...?tag=hsc…  numbered top-list posters
+  GET .../Users/{u}/Items/{id}            one item: HSC copy versions removed
+  GET|POST .../Items/{id}/PlaybackInfo    the same (Emby Web's Version list comes from here)
   anything carrying a SearchTerm query arg, of which two shapes are rewritten:
 
   GET .../ItemTypes?SearchTerm=...   rows reordered (rank.order_types)
@@ -167,11 +169,30 @@ class Handler(BaseHTTPRequestHandler):
                 return v[0]
         return "?"
 
-    def fetch(self, path_qs):
-        body = None
-        n = int(self.headers.get("Content-Length") or 0)
-        if n:
-            body = self.rfile.read(n)
+    def request_body(self):
+        """The client's request body, read once (Content-Length or chunked)."""
+        if not hasattr(self, "_body"):
+            body = None
+            if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+                parts = []
+                while True:
+                    size = int(self.rfile.readline().split(b";")[0].strip() or b"0", 16)
+                    if size == 0:
+                        while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+                            pass   # trailers
+                        break
+                    parts.append(self.rfile.read(size))
+                    self.rfile.readline()
+                body = b"".join(parts)
+            else:
+                n = int(self.headers.get("Content-Length") or 0)
+                if n:
+                    body = self.rfile.read(n)
+            self._body = body
+        return self._body
+
+    def fetch(self, path_qs, send_body=True):
+        body = self.request_body() if send_body else None
         headers = {k: v for k, v in self.headers.items()
                    if k.lower() not in HOP_HEADERS}
         req = urllib.request.Request(UPSTREAM + path_qs, data=body,
@@ -287,7 +308,8 @@ class Handler(BaseHTTPRequestHandler):
         hit = _SECTIONS.get(uid)
         if hit is None or now - hit[0] > SECTION_TTL or sid not in hit[1]:
             auth = [(k, v) for k, v in pairs if k.lower() == "api_key" or k.lower().startswith("x-emby-")]
-            st, _, b = self.fetch(f"{prefix}/Users/{uid}/HomeSections?{urllib.parse.urlencode(auth)}")
+            st, _, b = self.fetch(f"{prefix}/Users/{uid}/HomeSections?{urllib.parse.urlencode(auth)}",
+                                  send_body=False)
             if st == 200:
                 d = json.loads(b)
                 rows = d if isinstance(d, list) else d.get("Items", [])
@@ -301,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
         keep = [(k, v) for k, v in pairs
                 if k.lower() in ID_FETCH_KEEP or k.lower().startswith("x-emby-")]
         qs = urllib.parse.urlencode(keep + [("Ids", ",".join(ids))])
-        st, _, b = self.fetch(f"{prefix}/Users/{uid}/Items?{qs}")
+        st, _, b = self.fetch(f"{prefix}/Users/{uid}/Items?{qs}", send_body=False)
         return {i.get("Id"): i for i in json.loads(b).get("Items", [])} if st == 200 else {}
 
     def swap_lone_copies(self, path, params, pairs, items):
@@ -361,6 +383,25 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(502, [("Content-Type", "text/plain")], b"emby unreachable\n")
         return self.send(status, headers, body)
 
+    def handle_sources(self):
+        """One item, or its PlaybackInfo: HSC's copy no longer shows as a second version."""
+        try:
+            status, headers, body = self.fetch(self.path)
+        except (urllib.error.URLError, OSError) as e:
+            log(f"upstream error {e!r} for item {self.path.split('?')[0]}")
+            return self.send(502, [("Content-Type", "text/plain")], b"emby unreachable\n")
+        if status != 200:
+            return self.send(status, headers, body)
+        try:
+            data = json.loads(body)
+            if not toplist.strip_copy_sources(data, lambda i: COPIES.original(i) is not None):
+                return self.send(status, headers, body)
+            out = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+            return self.send(status, headers, out, extra=[("X-Searchfix", "item")])
+        except Exception as e:  # never break a detail page: serve what Emby gave us
+            log(f"item rewrite failed ({e!r}) for {self.path.split('?')[0]}")
+            return self.send(status, headers, body)
+
     def handle_any(self):
         if self.path == "/health":
             people = f"people={len(PEOPLE)}" if PEOPLE and PEOPLE.ready else "people=off"
@@ -379,6 +420,10 @@ class Handler(BaseHTTPRequestHandler):
         sec = toplist.section_request(self.command, parsed.path)
         if sec and COPIES is not None and COPIES.ready:
             return self.handle_section(*sec, pairs)
+        if ((toplist.item_request(self.command, parsed.path)
+             or toplist.playback_request(self.command, parsed.path))
+                and COPIES is not None and COPIES.ready):
+            return self.handle_sources()
         mode = classify(self.command, parsed.path, params)
 
         start = limit = 0

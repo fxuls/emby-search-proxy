@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.8.2 — 2026-10-29
+- **Top-list titles no longer offer a second "Version".** Home Screen Companion
+  merges each `.strm` copy into its real title as an alternate version, so the
+  detail page showed a Version dropdown with two entries for the same file.
+  searchfix now drops the copy's entries (`MediaSources[].ItemId` is a known
+  copy) from `GET .../Users/{u}/Items/{id}` and from `.../Items/{id}/PlaybackInfo`,
+  which is where Emby Web builds the dropdown. The real file's entry is passed
+  through untouched (direct play verified), and other multi-version movies are
+  left alone.
+- Request bodies are read once and forwarded as-is, including chunked uploads;
+  side lookups never resend the client's body.
+- nginx: PlaybackInfo has its own location with `proxy_request_buffering on`, so
+  when searchfix is down the device profile still reaches Emby via
+  `@emby_direct` (tested by stopping searchfix).
+
 ## 1.8.1 — 2026-10-29
 - **Search shows the real title instead of a lone top-list copy.** Emby lists
   merged versions once and sometimes picks Home Screen Companion's copy:

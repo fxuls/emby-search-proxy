@@ -60,6 +60,37 @@ class HelperTest(unittest.TestCase):
         self.assertIsNone(toplist.image_target("POST", "/emby/Items/100/Images/Primary",
                                                [("tag", toplist.make_tag("9", "x"))]))
 
+    def test_playback_request(self):
+        self.assertTrue(toplist.playback_request("POST", "/emby/Items/361616/PlaybackInfo"))
+        self.assertTrue(toplist.playback_request("GET", "/Items/361616/PlaybackInfo"))
+        self.assertFalse(toplist.playback_request("POST", "/emby/Items/361616/Images/Primary"))
+        self.assertFalse(toplist.playback_request("DELETE", "/emby/Items/361616/PlaybackInfo"))
+
+    def test_item_request(self):
+        self.assertTrue(toplist.item_request("GET", "/emby/Users/abc/Items/361616"))
+        self.assertTrue(toplist.item_request("GET", "/Users/abc/Items/361616"))
+        self.assertFalse(toplist.item_request("GET", "/emby/Users/abc/Items/Resume"))
+        self.assertFalse(toplist.item_request("GET", "/emby/Users/abc/Items/Latest"))
+        self.assertFalse(toplist.item_request("GET", "/emby/Users/abc/Items"))
+        self.assertFalse(toplist.item_request("POST", "/emby/Users/abc/Items/361616"))
+        self.assertFalse(toplist.item_request("GET", "/emby/Items/361616/PlaybackInfo"))
+
+    def test_strip_copy_sources(self):
+        is_copy = {"900"}.__contains__
+        item = {"MediaSources": [{"Id": "mediasource_100", "ItemId": "100"},
+                                 {"Id": "mediasource_900", "ItemId": "900"}]}
+        self.assertTrue(toplist.strip_copy_sources(item, is_copy))
+        self.assertEqual([m["ItemId"] for m in item["MediaSources"]], ["100"])
+        # the copy's own page: its own entry goes, the real file stays
+        item = {"MediaSources": [{"ItemId": "100"}, {"ItemId": "900"}]}
+        toplist.strip_copy_sources(item, is_copy)
+        self.assertEqual(item["MediaSources"], [{"ItemId": "100"}])
+        # real multi-version movies, a lone copy source, no sources: untouched
+        for srcs in ([{"ItemId": "100"}, {"ItemId": "101"}], [{"ItemId": "900"}], [], None):
+            item = {"MediaSources": srcs}
+            self.assertFalse(toplist.strip_copy_sources(item, is_copy))
+            self.assertEqual(item["MediaSources"], srcs)
+
     def test_swap_numbered_keeps_rank_art_on_real_item(self):
         items = [copy_item("900", "Knives Out"), copy_item("901", "Mario")]
         originals = {"100": real_item("100", "Knives Out")}
@@ -141,6 +172,11 @@ class FakeEmby(BaseHTTPRequestHandler):
                                     "TotalRecordCount": 2})
         if p.endswith("/Items") and "Ids" in q:
             return self.reply(200, {"Items": [real_item(i, "real " + i) for i in q["Ids"].split(",")]})
+        if p == "/emby/Users/u1/Items/100":
+            return self.reply(200, {"Id": "100", "Name": "Knives Out", "MediaSources": [
+                {"Id": "mediasource_100", "ItemId": "100"}, {"Id": "mediasource_900", "ItemId": "900"}]})
+        if p == "/emby/Users/u1/Items/102":
+            return self.reply(200, {"Id": "102", "MediaSources": [{"Id": "mediasource_102", "ItemId": "102"}]})
         if p == "/emby/Items/900/Images/Primary":
             return self.reply(200, b"NUMBERED-" + q.get("tag", "").encode(), "image/jpeg")
         if p == "/emby/Items/950/Images/Primary":
@@ -150,6 +186,17 @@ class FakeEmby(BaseHTTPRequestHandler):
         return self.reply(200, b"passthrough", "text/plain")
 
     do_HEAD = do_GET
+    bodies = []
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        FakeEmby.bodies.append(self.rfile.read(n) if n else b"")
+        FakeEmby.seen.append((self.path, dict(self.headers)))
+        if urllib.parse.urlsplit(self.path).path == "/emby/Items/100/PlaybackInfo":
+            return self.reply(200, {"PlaySessionId": "ps", "MediaSources": [
+                {"Id": "mediasource_100", "ItemId": "100", "TranscodingUrl": "/x"},
+                {"Id": "mediasource_900", "ItemId": "900"}]})
+        return self.reply(200, b"posted", "text/plain")
 
 
 def serve(handler):
@@ -287,6 +334,49 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.server_mod.api_prefix("/Users/abc/Items"), "")
         self.assertEqual(self.server_mod.api_prefix("/emby/Items"), "/emby")
         self.assertEqual(self.server_mod.api_prefix("/Items"), "")
+
+    def test_detail_page_hides_copy_version(self):
+        s, h, b = self.get("/emby/Users/u1/Items/100")
+        self.assertEqual([m["ItemId"] for m in json.loads(b)["MediaSources"]], ["100"])
+        self.assertEqual(h.get("X-Searchfix"), "item")
+
+    def test_detail_page_without_copy_untouched(self):
+        s, h, b = self.get("/emby/Users/u1/Items/102")
+        self.assertEqual(len(json.loads(b)["MediaSources"]), 1)
+        self.assertIsNone(h.get("X-Searchfix"))
+
+    def post(self, path, body, headers=None):
+        req = urllib.request.Request(self.base + path, data=body, headers=headers or {}, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, dict(r.headers), r.read()
+
+    def test_playbackinfo_hides_copy_version_and_forwards_body(self):
+        FakeEmby.bodies.clear()
+        profile = json.dumps({"DeviceProfile": {"Name": "x" * 5000}}).encode()
+        s, h, b = self.post("/emby/Items/100/PlaybackInfo?UserId=u1", profile,
+                            {"Content-Type": "application/json"})
+        d = json.loads(b)
+        self.assertEqual([m["ItemId"] for m in d["MediaSources"]], ["100"])
+        self.assertEqual(d["MediaSources"][0]["TranscodingUrl"], "/x")
+        self.assertEqual(d["PlaySessionId"], "ps")
+        self.assertEqual(FakeEmby.bodies, [profile])
+
+    def test_playbackinfo_chunked_body_forwarded(self):
+        import http.client
+        FakeEmby.bodies.clear()
+        conn = http.client.HTTPConnection("127.0.0.1", self.fix.server_port, timeout=5)
+        conn.putrequest("POST", "/emby/Items/100/PlaybackInfo")
+        conn.putheader("Transfer-Encoding", "chunked")
+        conn.putheader("Content-Type", "application/json")
+        conn.endheaders()
+        for chunk in (b'{"DeviceProfile":', b'{"Name":"tv"}}'):
+            conn.send(b"%x\r\n%s\r\n" % (len(chunk), chunk))
+        conn.send(b"0\r\n\r\n")
+        r = conn.getresponse()
+        d = json.loads(r.read())
+        conn.close()
+        self.assertEqual(FakeEmby.bodies, [b'{"DeviceProfile":{"Name":"tv"}}'])
+        self.assertEqual(len(d["MediaSources"]), 1)
 
     def test_rows_untouched_until_map_ready(self):
         saved = self.server_mod.COPIES

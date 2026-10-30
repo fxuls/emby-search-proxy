@@ -16,6 +16,12 @@ the real title:
 Tapping the card then opens the real title, with its own poster and an id that
 doesn't change every night.
 
+HSC also merges each copy into its real title as an alternate version, so the
+detail page offered a "Version" choice between two entries for the same file.
+For a single item (GET .../Users/{u}/Items/{id}) and its PlaybackInfo (which
+Emby Web builds the Version list from) the copy's entries are dropped from
+MediaSources (strip_copy_sources); the real file's entry is untouched.
+
 CopyMap is rebuilt in a background thread from Emby's library list: a copy is
 any Movie/Series whose library location is under HSC's plugin folder, and its
 original is the item with the same IMDb (else TMDb) id in a normal library.
@@ -33,6 +39,8 @@ TYPES = "Movie,Series"
 
 _TAG_RE = re.compile(r"hsc(\d+)_(.+)")
 _SECTION_RE = re.compile(r"^(?P<prefix>.*)/users/(?P<user>[^/]+)/sections/(?P<section>[^/]+)/items/?$", re.I)
+_ITEM_RE = re.compile(r"^.*/users/[^/]+/items/[0-9]+/?$", re.I)
+_PLAYBACK_RE = re.compile(r"^.*/items/[0-9]+/playbackinfo/?$", re.I)
 _IMAGE_RE = re.compile(r"^(?P<pre>.*/items/)(?P<id>[^/]+)(?P<post>/images/.*)$", re.I)
 
 
@@ -52,6 +60,29 @@ def section_request(method, path):
         return None
     m = _SECTION_RE.match(path)
     return (m.group("prefix"), m.group("user"), m.group("section")) if m else None
+
+
+def item_request(method, path):
+    """True for a single-item fetch (the detail page), GET .../Users/{u}/Items/{id}."""
+    return method == "GET" and bool(_ITEM_RE.match(path))
+
+
+def playback_request(method, path):
+    """True for .../Items/{id}/PlaybackInfo (GET or POST)."""
+    return method in ("GET", "POST") and bool(_PLAYBACK_RE.match(path))
+
+
+def strip_copy_sources(item, is_copy):
+    """Drop HSC copies from an item's MediaSources (its alternate versions).
+    Keeps at least one source. Returns True if anything was removed."""
+    sources = item.get("MediaSources")
+    if not sources or len(sources) < 2:
+        return False
+    keep = [m for m in sources if not is_copy(str(m.get("ItemId") or ""))]
+    if not keep or len(keep) == len(sources):
+        return False
+    item["MediaSources"] = keep
+    return True
 
 
 def image_target(method, path, pairs):

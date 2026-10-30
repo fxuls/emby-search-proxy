@@ -68,6 +68,12 @@ searchfix now rewrites home rows (`/Users/{id}/Sections/{id}/Items`):
   the numbered poster: its image tag (`hsc<copyId>_<tag>`) is routed back to
   the copy's image. Tapping it opens the real title, with its own poster.
 - **On any other row** (Continue Watching, ...) a copy is shown as the real title.
+- **No second "Version".** The plugin merges each copy into its real title as an
+  alternate version, so the detail page offered two versions of the same file.
+  searchfix drops the copy from `MediaSources` in single-item requests and in
+  `PlaybackInfo` (where Emby Web builds the Version list). nginx buffers
+  PlaybackInfo bodies so a searchfix outage still falls back to Emby.
+- **Search** shows the real title when Emby picked the copy.
 
 The copy → title map is rebuilt every 10 minutes (`TOPLIST_REFRESH_MINUTES`) from
 the libraries whose folder is under the plugin's directory. Needs `EMBY_API_KEY`;
@@ -75,7 +81,8 @@ the libraries whose folder is under the plugin's directory. Needs `EMBY_API_KEY`
 
 ## Safety properties
 
-- **Only searches, home rows and numbered top-list posters are touched.**
+- **Only searches, home rows, numbered top-list posters, single items and
+  PlaybackInfo are touched** (the last two only to drop the plugin's copy version).
   Streaming, other images, logins, websockets and the rest of the API bypass
   the Python service entirely.
 - **Fails open.** If searchfix is down, nginx sends the search straight to
