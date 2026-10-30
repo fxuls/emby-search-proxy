@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.8.3 — 2026-10-29
+- **Home-row rewrite turned off (nginx no longer routes `/Sections/{id}/Items`
+  to searchfix).** Tested on real devices it broke: the Android TV app caches
+  items by Id, so after opening a title (now the real item, clean poster) the
+  row card showed the clean poster too and the rank numbers disappeared; on
+  iOS the home rows stopped loading (the app dropped its row requests, "broken
+  pipe" in searchfix; not reproduced). The code stays in `toplist.py` but is
+  unused until a design that survives app caching is found. Numbered-poster
+  routing stays, for rows apps still hold.
+- Still active: search swaps lone copies (1.8.1), and single-item/PlaybackInfo
+  responses hide the copy version (1.8.2).
+
 ## 1.8.2 — 2026-10-29
 - **Top-list titles no longer offer a second "Version".** Home Screen Companion
   merges each `.strm` copy into its real title as an alternate version, so the
