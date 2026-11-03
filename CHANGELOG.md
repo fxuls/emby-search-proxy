@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.8.5 — 2026-11-03
+- **Request log.** nginx now writes one line per API request to
+  `/var/log/emby-requests/req-YYYY-MM-DD.log` (bind mount, new in the compose
+  service), so it is possible to see what a client app actually asks Emby for.
+  Streams, images, websockets, playback progress, pings and static web files are
+  skipped. Token query args (`api_key`, `X-Emby-Token`, `X-MediaBrowser-Token`,
+  `AccessToken`, `Token`) are written as `REDACTED`; the `X-Emby-Authorization`
+  header is never logged, only its `Client=`/`Device=` fields; apps that send
+  `X-Emby-Client`/`X-Emby-Device-Name` as query args get those instead. Empty
+  connections (no request line, 400) are skipped. Times are UTC.
+  `root` is set in the server block because a variable log path makes nginx check
+  it exists. Retention is a host cron (14 days in the reference setup). Details:
+  `docs/runbook.md` → "Request log".
+
 ## 1.8.4 — 2026-10-29
 - **Fix: request bodies on a kept-alive connection.** 1.8.2 cached the request
   body on the handler, which Python keeps for the whole connection, so a second

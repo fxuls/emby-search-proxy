@@ -34,6 +34,7 @@
       - 8096:8096
     volumes:
       - /home/mc/homelab/emby-search-proxy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - /home/mc/docker/emby/request-logs:/var/log/emby-requests   # API request log, 14 days (cron)
     depends_on:
       - emby
       - searchfix

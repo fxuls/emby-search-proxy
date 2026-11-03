@@ -90,6 +90,32 @@ Emergency: if nginx is wedged and you can't think, `docker restart emby-proxy`.
   (no sqlite3 CLI on the host: use `python3 -c` with `sqlite3.connect(...?mode=ro, uri=True)`).
 - Test traffic: send header `X-Searchfix-Test: 1` (smoke.py/eval.py do) or it lands in the log.
 
+## Request log
+
+nginx writes one line per API request to `/var/log/emby-requests/req-YYYY-MM-DD.log`
+(host: `~/docker/emby/request-logs`, bind mount added in the compose file). Use it to see what a
+client app actually asks Emby for (e.g. which query an Android TV app makes for an actor page).
+
+- **Skipped:** video/audio/HLS streams, images, websockets, playback progress pings,
+  `/System/Ping`, static web files. Everything else is logged.
+- **Columns (tab-separated):** time (ISO 8601, **UTC**: the container has no timezone, so files
+  roll over at 17:00/18:00 Mountain), client IP, app, device, method, URL, status, bytes,
+  seconds, backend (`emby_up`/`searchfix_up`), user agent. App/device come from the
+  `X-Emby-Authorization` header (`Client=`/`Device=`), else from the `X-Emby-Client` /
+  `X-Emby-Device-Name` query args that most Emby apps send instead (URL-encoded as sent).
+  Requests with no request line (a periodic empty connection nginx answers 400) are skipped.
+- **Tokens:** `api_key`, `X-Emby-Token`, `X-MediaBrowser-Token`, `AccessToken` and `Token` query
+  args are replaced with `REDACTED` (up to 3 per URL). The `X-Emby-Authorization` header itself is
+  never logged. Request bodies are never logged.
+- **Retention:** 14 days, host cron `find ~/docker/emby/request-logs -name "req-*.log" -mtime +13 -delete`.
+- The directory is mode 777 because the nginx worker (uid 101) creates the files.
+- A variable in the log path makes nginx check that `root` exists, hence `root /usr/share/nginx/html`
+  in the server block (nothing is served from it). Without it nothing is logged and the error log
+  fills with `testing "/etc/nginx/html" existence failed`.
+- nginx's **error** log (`docker logs emby-proxy`) prints the full request line, tokens included,
+  whenever it logs an error. That was already true before the request log.
+- Off switch: replace the `access_log` line with `access_log off;`, `nginx -t`, reload.
+
 ## People signal
 
 - Key: `.env` → `EMBY_API_KEY` (Emby API key "custom-search"). `chmod 600`, git-ignored.
