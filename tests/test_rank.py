@@ -152,6 +152,37 @@ class Rerank(unittest.TestCase):
     def test_empty(self):
         self.assertEqual(rank.rerank([], "x"), [])
 
+    def test_qualified_show_beats_same_named_episodes(self):
+        # "Hell's kitchen" 2026-11-06: two episodes named "Hell's Kitchen" (Criminal
+        # Minds, SVU) ranked above the show "Hell's Kitchen (US)".
+        emby = [it("Episode", "Hell's Kitchen"), it("Episode", "Hell's Kitchen"),
+                it("Series", "Hell's Kitchen (US)"), it("Episode", "Hell's Kitchen University")]
+        for term in ("Hell's kitchen", "hells kitchen", "Hell\u2019s kitchen", "HELL'S KITCHEN"):
+            self.assertEqual(names(rank.rerank(emby, term))[0], "Hell's Kitchen (US)", term)
+
+    def test_qualifier_only_stripped_for_media(self):
+        self.assertEqual(rank.strip_qualifier("The Office (US)"), "The Office")
+        self.assertEqual(rank.strip_qualifier("Doctor Who (2005)"), "Doctor Who")
+        self.assertEqual(rank.strip_qualifier("Friends (The One)"), "Friends (The One)")
+        # a person or episode keeps its literal name
+        self.assertEqual(rank.score(it("Person", "John Smith (II)"), "john smith", "john smith"),
+                         rank.PREFIX + rank.TYPE_PENALTY["Person"])
+        self.assertEqual(rank.score(it("Episode", "Pilot (US)"), "pilot", "pilot"),
+                         rank.PREFIX + rank.TYPE_PENALTY["Episode"])
+
+    def test_typed_qualifier_still_exact(self):
+        self.assertEqual(rank.score(it("Series", "The Office (US)"), rank.norm("the office (us)"),
+                                    "office us"), rank.EXACT)
+
+    def test_apostrophes_are_deleted_not_spaced(self):
+        self.assertEqual(rank.norm("Hell's Kitchen"), "hells kitchen")
+        self.assertEqual(rank.norm("Grey\u2019s Anatomy"), "greys anatomy")
+        self.assertEqual(rank.norm("Ocean\u2018s"), "oceans")
+        self.assertEqual(rank.norm("Marvel's Agents of S.H.I.E.L.D."), "marvels agents of s h i e l d")
+        # a single possessive word is one word, so it gets no multi-word exact cap
+        emby = [it("Episode", "Grey's"), it("Series", "Grey's Anatomy")]
+        self.assertEqual(rank.rerank(emby, "grey's")[0]["Type"], "Series")
+
 
 class OrderTypes(unittest.TestCase):
     def test_la_la_rows(self):

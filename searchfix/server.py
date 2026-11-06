@@ -97,6 +97,18 @@ DEFAULT_NAME_SORTS = {
 }
 
 
+# iOS/macOS "smart punctuation" types curly quotes. Emby matches them literally,
+# so "Hell’s kitchen" found nothing: no type rows at all, and Top Results only had
+# what fuzzy rescued (2026-11-06). Straight quotes match the library as stored.
+_QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u02bc": "'", "\u201b": "'",
+                         "\u2032": "'", "\u201c": '"', "\u201d": '"', "\u201f": '"'})
+
+
+def plain_quotes(term):
+    """term with typographic quotes replaced by ' and "."""
+    return term.translate(_QUOTES)
+
+
 def is_default_sort(sortby):
     return sortby.replace(" ", "").lower() in DEFAULT_NAME_SORTS
 
@@ -420,6 +432,13 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
         params = {k.lower(): v for k, v in pairs}
+        if params.get("searchterm") and plain_quotes(params["searchterm"]) != params["searchterm"]:
+            # Every request to Emby is built from self.path/pairs, so rewriting them
+            # here fixes the main fetch, the media pool, ItemTypes and passthroughs.
+            pairs = [(k, plain_quotes(v) if k.lower() == "searchterm" else v) for k, v in pairs]
+            params = {k.lower(): v for k, v in pairs}
+            self.path = parsed.path + "?" + urllib.parse.urlencode(pairs)
+            parsed = urllib.parse.urlsplit(self.path)
 
         img = toplist.image_target(self.command, parsed.path, pairs)
         if img:

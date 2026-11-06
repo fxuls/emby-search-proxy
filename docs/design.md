@@ -45,6 +45,13 @@ after lowercasing and stripping accents and punctuation:
 | every query word starts some title word | 35 | "star wars" → "Wars of the Stars" |
 | no visible match (Emby matched another field) | 40 | a movie found via its cast |
 
+Normalising: lowercase, accents stripped, apostrophes (and ’ ‘ ʼ) **deleted**
+("Hell's" → "hells", so it matches typed with or without one and stays one
+word), other punctuation becomes a space. Shows, movies and collections also
+match on their name without a trailing country/year qualifier, because people
+never type it: "Hell's Kitchen (US)" is an exact match for "hell's kitchen"
+(1.8.6; before, two episodes named "Hell's Kitchen" ranked above the show).
+
 Extra penalties: +3 when matching `OriginalTitle`/`SortName` instead of `Name`;
 +5 when matching only after dropping the query's own leading article (so
 "The Office" prefers "The Office (US)" to "Office Space").
@@ -186,6 +193,14 @@ its plugin folder, and Emby search returns both. `rank.drop_hsc_copies` drops
 a copy when the real item (same Type + TMDB id, falling back to name + year)
 is in the same result list. It runs on the final list before paging. Home
 rows are untouched.
+
+## Smart quotes (1.8.6)
+
+iOS and macOS type `’` for an apostrophe. Emby matches it literally, so
+"Hell’s kitchen" returned nothing, `/ItemTypes` was empty and the app drew no
+rows. `server.plain_quotes` rewrites typographic quotes in `SearchTerm` to plain
+`'`/`"` before any upstream fetch (main pool, media pool, ItemTypes,
+passthrough endpoints). The search log stores the rewritten term.
 
 ## Search log (1.6.0)
 

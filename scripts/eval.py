@@ -90,6 +90,10 @@ CASES = [
     ("time travel", "a tag is not #1 (tags stay last)", lambda it: it[0]["Type"] != "Tag"),
     ("john", "media before 4th person (no person flood)", lambda it: sum(1 for i in it[:10] if i["Type"] == "Person") <= 6),
     ("the", "top 10 has no tags", lambda it: all(i["Type"] != "Tag" for i in it[:10])),
+    # 2026-11-06: episodes named "Hell's Kitchen" (Criminal Minds, SVU) beat the show
+    ("hell's kitchen", "Hell's Kitchen (US) #1", lambda it: it[0]["Name"] == "Hell's Kitchen (US)"),
+    ("hells kitchen", "Hell's Kitchen (US) #1 without the apostrophe", lambda it: it[0]["Name"] == "Hell's Kitchen (US)"),
+    ("grey's", "Grey's Anatomy #1 (a possessive is one word)", lambda it: it[0]["Name"] == "Grey's Anatomy"),
 ]
 
 # Typo checks, run against the live proxy only (fuzzy lives in server.py):
@@ -106,6 +110,14 @@ TYPOS = [
     ("leonardo dicapro", "Leonardo DiCaprio"), ("denzel washingon", "Denzel Washington"),
     ("jurrasic world", "Jurassic World"), ("the dark night", "The Dark Knight"),
     ("frozn", "Frozen"), ("greys anatomy", "Grey"), ("hary", "Harry Potter"),
+]
+
+# Smart-punctuation checks, live proxy only (the quote rewrite lives in server.py):
+# (query as an iPhone types it, expected first result). Each also needs a
+# non-empty /ItemTypes, or the app draws no rows at all (2026-11-06).
+QUOTES = [
+    ("Hell\u2019s kitchen", "Hell's Kitchen (US)"), ("Ocean\u2019s Eleven", "Ocean's Eleven"),
+    ("How it\u2019s made", "How It's Made"), ("Grey\u2019s anatomy", "Grey's Anatomy"),
 ]
 
 # Alternative weight settings to compare (applied by monkeypatching rank).
@@ -394,6 +406,19 @@ def main():
             ok += hit
             print(f"  {'PASS' if hit else 'FAIL'}  {q!r:22} -> {live[0]['Name'] if live else '(nothing)'}")
         print(f"  {ok}/{len(TYPOS)} typos fixed")
+        print("\n=== Smart quotes (live proxy: first result + type rows)")
+        ok = 0
+        for q, want in QUOTES:
+            base = {"api_key": KEY, "SearchTerm": q, "Recursive": "true"}
+            with _open(f"{PROXY}/emby/Users/{UID}/Items?{urllib.parse.urlencode({**base, 'Limit': '10'})}") as r:
+                live = json.load(r)["Items"]
+            with _open(f"{PROXY}/emby/ItemTypes?{urllib.parse.urlencode({**base, 'UserId': UID})}") as r:
+                rows = [t.get("Name") for t in json.load(r)["Items"]]
+            hit = bool(live) and live[0]["Name"] == want and bool(rows)
+            ok += hit
+            print(f"  {'PASS' if hit else 'FAIL'}  {q!r:22} -> {live[0]['Name'] if live else '(nothing)'}"
+                  f"   rows: {', '.join(rows) or '(none)'}")
+        print(f"  {ok}/{len(QUOTES)} pass")
 
 
 if __name__ == "__main__":

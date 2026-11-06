@@ -203,6 +203,25 @@ class ServerTest(unittest.TestCase):
         self.assertNotIn("Limit", self.upstream_query())
         self.assertEqual(len(json.loads(b)["Items"]), 4)
 
+    def test_curly_quotes_sent_to_emby_as_straight(self):
+        # iPhone "Hell’s kitchen" 2026-11-06: Emby matched nothing, no type rows at all
+        for path in ("/emby/Users/u/Items?SearchTerm=Hell%E2%80%99s%20kitchen&Limit=5",
+                     "/emby/ItemTypes?SearchTerm=Hell%E2%80%99s%20kitchen&userId=u",
+                     "/emby/Persons?SearchTerm=O%E2%80%98Brien%20%E2%80%9Cx%E2%80%9D"):
+            FakeEmby.seen.clear()
+            self.get(path)
+            terms = {dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(p).query)).get("SearchTerm")
+                     for p, _ in FakeEmby.seen}
+            self.assertTrue(terms, path)
+            for t in terms:
+                self.assertNotRegex(t, "[\u2018\u2019\u201c\u201d]", path)
+            self.assertTrue(terms & {"Hell's kitchen", "O'Brien \"x\""}, terms)
+
+    def test_plain_quotes(self):
+        pq = self.server_mod.plain_quotes
+        self.assertEqual(pq("Hell\u2019s \u201cKitchen\u201d"), "Hell's \"Kitchen\"")
+        self.assertEqual(pq("Ocean's"), "Ocean's")
+
     def test_other_search_endpoints_passthrough(self):
         s, h, b = self.get("/emby/Persons?SearchTerm=tom")
         self.assertEqual(b, b"passthrough")

@@ -136,7 +136,15 @@ docker run --rm --network emby_default -v $PWD:/repo:ro -v emby_searchfix-data:/
   python:3.12-alpine python /repo/scripts/eval.py --n 400 --variants --live
 ```
 Run it before and after any weight change; add a CASES entry for every
-"search looks wrong" report. The volume is `emby_searchfix-data` (compose
+"search looks wrong" report.
+
+Whole-library check (every show/movie/collection searched for its own title;
+~30 s, read-only, test traffic stays out of the search log):
+```bash
+set -a; . ./.env; set +a; scripts/selfsearch.py            # exit 1 = a title loses to something else
+scripts/selfsearch.py --offline-only                         # rank.py only, no live searches
+```
+Runs nightly from cron (`~/homelab/scripts/search_selfcheck.sh`), Telegram alert on a confirmed loss. The volume is `emby_searchfix-data` (compose
 prefixes the project name). A bare `searchfix-data` silently creates an empty one.
 
 ## Tuning knobs

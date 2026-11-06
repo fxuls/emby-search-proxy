@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.8.6 — 2026-11-06
+- **Fix: a show with a qualifier lost to same-named episodes.** "Hell's kitchen"
+  listed two episodes named "Hell's Kitchen" (Criminal Minds, SVU) above the show
+  "Hell's Kitchen (US)": the "(US)" made the show only a prefix match (10) while
+  the episodes were exact and got the multi-word exact-phrase cap (5). Shows,
+  movies and collections now also match on their name without a trailing
+  country/year qualifier (`(US)`, `(UK)`, `(2005)`), so the show is exact (0).
+  It only showed once the last word was typed in full, hence "sometimes".
+- **Apostrophes are deleted, not turned into a space.** `norm("Hell's")` was
+  `"hell s"`: "hells kitchen" typed without one matched nothing visible (rescued
+  only by fuzzy), and "Grey's" counted as two words and got the exact-phrase cap.
+  Now `"hells"`. Typographic look-alikes (’ ‘ ʼ) are treated the same.
+- **Curly quotes in a search are sent to Emby as straight ones.** iOS/macOS
+  smart punctuation types `’`; Emby matches it literally, so "Hell’s kitchen"
+  found nothing: `/ItemTypes` was empty (no rows at all in the app) and Top
+  Results held only what fuzzy rescued. `’ ‘ ʼ ‛ ′` become `'`, `“ ” ‟` become `"`,
+  on every request carrying a SearchTerm, before anything is fetched.
+- **New `scripts/selfsearch.py`:** searches every show, movie and collection for
+  its own title (as typed, and without apostrophes) offline with rank.py, then
+  confirms each miss through the live proxy. Exit 1 on a confirmed loss. Before
+  this release it found exactly the Hell's Kitchen loss; after, none of 3,023
+  queries. `eval.py` gained the Hell's Kitchen/Grey's cases and live
+  smart-quote checks (first result and non-empty type rows).
+
 ## 1.8.5 — 2026-11-03
 - **Request log.** nginx now writes one line per API request to
   `/var/log/emby-requests/req-YYYY-MM-DD.log` (bind mount, new in the compose

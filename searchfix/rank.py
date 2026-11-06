@@ -95,14 +95,32 @@ ALT_FIELD_PENALTY = 3
 BARE_QUERY_PENALTY = 5
 
 _ARTICLE = re.compile(r"^(the|a|an) ")
+# ' and its typographic look-alikes (iOS/macOS "smart punctuation" types U+2019).
+_APOSTROPHE = re.compile("['\u2018\u2019\u02bc\u0060\u00b4]")
+# A trailing country or year qualifier that tells same-named titles apart and that
+# people never type: "Hell's Kitchen (US)", "The Office (UK)", "Doctor Who (2005)".
+# Matched as an alternative name, so "hell's kitchen" is an exact hit for the show
+# instead of only a prefix (episodes named "Hell's Kitchen" ranked above it, 2026-11-06).
+_QUALIFIER = re.compile(r"\s*\((?:[A-Z]{2,3}|\d{4})\)\s*$")
+QUALIFIED_TYPES = ("Series", "Movie", "BoxSet")
 
 
 def norm(s):
-    """Lowercase, strip accents and punctuation, collapse whitespace."""
+    """Lowercase, strip accents and punctuation, collapse whitespace.
+
+    Apostrophes are deleted, not turned into a space: "Hell's" -> "hells", so
+    "hells kitchen" typed without one still matches, and "Grey's" stays one word.
+    """
     s = unicodedata.normalize("NFKD", s or "")
     s = "".join(c for c in s if not unicodedata.combining(c)).lower()
+    s = _APOSTROPHE.sub("", s)
     s = re.sub(r"[^\w\s]", " ", s)
     return " ".join(s.split())
+
+
+def strip_qualifier(name):
+    """"Hell's Kitchen (US)" -> "Hell's Kitchen"; unchanged if there is no qualifier."""
+    return _QUALIFIER.sub("", name or "")
 
 
 def _whole_word_at(name, i, q):
@@ -146,11 +164,17 @@ def score_parts(item, q, q_bare, person_titles=None):
     best = NO_MATCH
     for field, extra in (("Name", 0), ("OriginalTitle", ALT_FIELD_PENALTY),
                          ("SortName", ALT_FIELD_PENALTY)):
-        name = norm(item.get(field))
-        for query, qextra in ((q, 0), (q_bare, BARE_QUERY_PENALTY)):
-            t = match_tier(name, query)
-            if t is not None:
-                best = min(best, t + extra + qextra)
+        raw = item.get(field)
+        names = [norm(raw)]
+        if item.get("Type") in QUALIFIED_TYPES:
+            plain = strip_qualifier(raw)
+            if plain != (raw or ""):
+                names.append(norm(plain))
+        for name in names:
+            for query, qextra in ((q, 0), (q_bare, BARE_QUERY_PENALTY)):
+                t = match_tier(name, query)
+                if t is not None:
+                    best = min(best, t + extra + qextra)
     type_ = item.get("Type")
     penalty = TYPE_PENALTY.get(type_, DEFAULT_PENALTY)
     if (EXACT_PHRASE_PENALTY_CAP is not None and best == EXACT and type_ != "Tag"
