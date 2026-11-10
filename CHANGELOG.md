@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.9.0 — 2026-11-10
+- **Home rows sorted by rating get a new order every day** (`searchfix/rowshuffle.py`,
+  `docs/row-shuffle.md`). Score = rating + SIGMA × a per-title, per-day normal
+  nudge, so higher-rated titles still lead but page 1 isn't the same 12 titles
+  forever. Same order for every user, all day; changes at 04:00. Only `items`
+  sections with a tag/genre/studio query and a stored `CommunityRating,…`
+  descending sort qualify; every other row passes through byte for byte.
+- nginx routes `/Users/{u}/Sections/{id}/Items` to searchfix again. Unlike 1.8.0,
+  item ids and item JSON are untouched: searchfix picks the page's ids and asks
+  Emby for them with `Ids=` (Emby keeps that order). Fails open to Emby.
+- New env: `ROW_SHUFFLE` (default off), `ROW_SHUFFLE_SIGMA` (0.4; 0 = Emby's
+  order through the same path), `ROW_SHUFFLE_ROLLOVER_HOUR`, `ROW_SHUFFLE_SORTBY`,
+  `ROW_SHUFFLE_MEMBERS_TTL`. The 1.8.0 top-list row swap is now behind
+  `TOPLIST_ROW_REWRITE=0` (was dead code reached only if nginx routed rows).
+- `/health` adds `rows=sigma…|off`.
+
 ## 1.8.6 — 2026-11-06
 - **Fix: a show with a qualifier lost to same-named episodes.** "Hell's kitchen"
   listed two episodes named "Hell's Kitchen" (Criminal Minds, SVU) above the show

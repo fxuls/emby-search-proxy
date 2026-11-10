@@ -84,6 +84,15 @@ The copy → title map is rebuilt every 10 minutes (`TOPLIST_REFRESH_MINUTES`) f
 the libraries whose folder is under the plugin's directory. Needs `EMBY_API_KEY`;
 `TOPLIST_ROWS=0` turns it off. Code: `searchfix/toplist.py`.
 
+### Daily order for rating-sorted home rows (1.9.0)
+
+Rows sorted by rating (`CommunityRating`, descending) get a new order each day:
+rating plus a small per-title random nudge, the same for every user, changing at
+04:00. Better-rated titles still lead, but page 1 isn't the same dozen titles
+forever. searchfix only picks *which ids* go on each page and asks Emby for them;
+item JSON is Emby's own. `ROW_SHUFFLE=1` turns it on, `ROW_SHUFFLE_SIGMA` sets the
+nudge (0.4 rating points by default). Details and tuning: `docs/row-shuffle.md`.
+
 ## Safety properties
 
 - **Only searches, home rows, numbered top-list posters, single items and
@@ -111,6 +120,7 @@ the libraries whose folder is under the plugin's directory. Needs `EMBY_API_KEY`
 | `searchfix/fuzzy.py` | Typo-tolerant lookup, used only when nothing matches the whole query |
 | `searchfix/expand.py` | Query expansion for rare misspelled words (hary → also harry) |
 | `searchfix/searchlog.py` | Search log writer (SQLite, one row per search) |
+| `searchfix/rowshuffle.py` | Daily rating jitter for rating-sorted home rows (`docs/row-shuffle.md`) |
 | `searchfix/toplist.py` | Home rows: Home Screen Companion top-list copies → real titles, numbered posters kept |
 | `.env` | `EMBY_API_KEY` for the people signal. **Not in git** |
 | `searchfix/Dockerfile` | Image `emby-searchfix:local` |

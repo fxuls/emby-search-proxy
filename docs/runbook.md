@@ -160,3 +160,21 @@ prefixes the project name). A bare `searchfix-data` silently creates an empty on
 | `fuzzy.py` | `MIN_SCORE`, `CANDIDATES` | 0.82, 150 |
 | `rank.py` | `PERSON_BONUS_PER_DOUBLING`, `PERSON_BONUS_MAX` | 2, 6 |
 | `rank.py` | `REPEAT_STEP`, `FREE_REPEATS`, `PARTIAL_WORD_PENALTY` | 2, 3, 2 |
+
+## Home-row shuffle (1.9.0)
+
+How it works and why: `docs/row-shuffle.md`. All settings are searchfix env vars in the compose file.
+
+```bash
+# see what it's doing
+docker exec emby-searchfix wget -qO- http://127.0.0.1:8080/health     # ... rows=sigma0.4
+docker logs --since 1h emby-searchfix 2>&1 | grep '^.\{20\}rows ' | tail
+docker logs --since 1h emby-searchfix 2>&1 | grep 'rows  failed'      # should be empty
+
+# change the nudge, or set ROW_SHUFFLE_SIGMA=0 (Emby's order) / ROW_SHUFFLE=0 (off)
+cd ~/docker/emby && $EDITOR docker-compose.yml && docker compose up -d searchfix
+```
+
+Full removal from the row path: delete the `/Sections/[^/]+/Items` line in the
+`map` in `nginx/default.conf`, check the container sees it, then
+`docker exec emby-proxy nginx -t && docker exec emby-proxy nginx -s reload`.

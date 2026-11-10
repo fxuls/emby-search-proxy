@@ -1,8 +1,10 @@
 """searchfix: re-ranks Emby search responses, and keeps HSC top-list copies
 on their home rows (toplist.py).
 
-nginx sends three kinds of request here; everything else goes straight to Emby:
-  GET .../Users/{u}/Sections/{id}/Items   home rows: HSC copies -> real titles
+nginx sends these requests here; everything else goes straight to Emby:
+  GET .../Users/{u}/Sections/{id}/Items   home rows: rating-sorted rows get a daily
+                                          rating jitter (rowshuffle.py, ROW_SHUFFLE=1);
+                                          the HSC copy swap (toplist.py) is off since 1.8.3
   GET .../Items/{id}/Images/...?tag=hsc…  numbered top-list posters
   GET .../Users/{u}/Items/{id}            one item: HSC copy versions removed
   GET|POST .../Items/{id}/PlaybackInfo    the same (Emby Web's Version list comes from here)
@@ -40,6 +42,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import expand
 import fuzzy
 import rank
+import rowshuffle
 import toplist
 from rank import drop_hsc_copies  # noqa: F401  (re-exported for tests)
 from library import LibraryIndex
@@ -71,6 +74,20 @@ TOPLIST_REFRESH_MINUTES = float(os.environ.get("TOPLIST_REFRESH_MINUTES", "10"))
 COPIES = None      # toplist.CopyMap
 SECTION_TTL = 300
 _SECTIONS = {}     # user id -> (monotonic time, {section id: parent library id})
+# The HSC copy swap on home rows (toplist.handle_section). Off since 1.8.3 (broke on
+# Android TV and iOS); kept behind a flag so the code isn't lost.
+TOPLIST_ROW_REWRITE = os.environ.get("TOPLIST_ROW_REWRITE", "0") == "1"
+# Daily rating jitter for rating-sorted home rows (rowshuffle.py). Off unless ROW_SHUFFLE=1.
+# ROW_SHUFFLE_SIGMA=0 sends rows through the same code path in Emby's own order.
+ROW_SHUFFLE = os.environ.get("ROW_SHUFFLE", "0") == "1"
+ROW_SHUFFLE_SIGMA = float(os.environ.get("ROW_SHUFFLE_SIGMA", "0.4"))
+ROW_SHUFFLE_ROLLOVER_HOUR = int(os.environ.get("ROW_SHUFFLE_ROLLOVER_HOUR", "4"))
+ROW_SHUFFLE_SORTBYS = {rowshuffle.norm_sort(x) for x in
+                       os.environ.get("ROW_SHUFFLE_SORTBY", "CommunityRating,SortName").split(";") if x.strip()}
+ROW_SECTIONS = rowshuffle.TTLCache(SECTION_TTL)       # user id -> {section id: section}
+ROW_MEMBERS = rowshuffle.TTLCache(float(os.environ.get("ROW_SHUFFLE_MEMBERS_TTL", "600")))
+# Client params never forwarded to the Ids fetch: we do the paging and the order.
+ROW_DROP = {"startindex", "limit", "sortby", "sortorder", "randomseed", "parentid", "ids"}
 
 # Presentation params copied from the client's request when fetching fuzzy
 # matches by Id, so they come back in the same shape as the rest of the list.
@@ -330,6 +347,81 @@ class Handler(BaseHTTPRequestHandler):
                 _SECTIONS[uid] = hit
         return hit[1].get(sid) if hit else None
 
+    def passthrough(self):
+        """The request, sent to Emby as is."""
+        try:
+            status, headers, body = self.fetch(self.path)
+        except (urllib.error.URLError, OSError) as e:
+            log(f"upstream error {e!r} for {self.path.split('?')[0]}")
+            return self.send(502, [("Content-Type", "text/plain")], b"emby unreachable\n")
+        return self.send(status, headers, body)
+
+    def home_section(self, prefix, uid, sid, auth):
+        """This user's home section sid (Emby's HomeSections entry), or None."""
+        secs = ROW_SECTIONS.get(uid)
+        if secs is None or sid not in secs:
+            st, _, b = self.fetch(f"{prefix}/Users/{uid}/HomeSections?{urllib.parse.urlencode(auth)}",
+                                  send_body=False)
+            if st != 200:
+                return None
+            d = json.loads(b)
+            rows = d if isinstance(d, list) else d.get("Items", [])
+            secs = {s.get("Id"): s for s in rows}
+            ROW_SECTIONS.put(uid, secs)
+        return secs.get(sid)
+
+    def row_members(self, prefix, uid, sid, auth):
+        """[(id, rating)] of the whole row in Emby's order, as this user sees it."""
+        key = (uid, sid)
+        hit = ROW_MEMBERS.get(key)
+        if hit is not None:
+            return hit
+        qs = urllib.parse.urlencode(auth + [("Fields", "CommunityRating"), ("EnableImages", "false"),
+                                            ("EnableUserData", "false")])
+        st, _, b = self.fetch(f"{prefix}/Users/{uid}/Sections/{sid}/Items?{qs}", send_body=False)
+        if st != 200:
+            raise RuntimeError(f"row members: Emby answered {st}")
+        members = [(i["Id"], i.get("CommunityRating")) for i in json.loads(b).get("Items", []) if i.get("Id")]
+        ROW_MEMBERS.put(key, members)
+        return members
+
+    def handle_row_shuffle(self, prefix, uid, sid, pairs):
+        """A home row. Rating-sorted rows are served in today's jittered order
+        (rowshuffle.py): one Ids fetch per page, Emby's own item JSON. Anything
+        else, or any error, goes to Emby unchanged."""
+        try:
+            auth = [(k, v) for k, v in pairs if k.lower() == "api_key" or k.lower().startswith("x-emby-")]
+            section = self.home_section(prefix, uid, sid, auth)
+            if not rowshuffle.eligible(section, ROW_SHUFFLE_SORTBYS):
+                return self.passthrough()
+            params = {k.lower(): v for k, v in pairs}
+            start, limit = _int(params.get("startindex")), _int(params.get("limit"))
+            row = rowshuffle.row_key(section)
+            day = rowshuffle.day_key(rollover_hour=ROW_SHUFFLE_ROLLOVER_HOUR)
+            ids = rowshuffle.order(self.row_members(prefix, uid, sid, auth), ROW_SHUFFLE_SIGMA, row, day)
+            want_total = params.get("enabletotalrecordcount", "true").lower() != "false"
+            sl = rowshuffle.page(ids, start, limit)
+            name = section.get("CustomName") or section.get("Name") or "?"
+            log(f"rows  client={self.client_name()!r} row={name!r} start={start} limit={limit or '-'} "
+                f"of={len(ids)} sigma={ROW_SHUFFLE_SIGMA} day={day}")
+            if not sl:
+                out = json.dumps({"Items": [], "TotalRecordCount": len(ids) if want_total else 0}).encode()
+                return self.send(200, [("Content-Type", "application/json; charset=utf-8")], out,
+                                 extra=[("X-Searchfix", "rows")])
+            keep = [(k, v) for k, v in pairs if k.lower() not in ROW_DROP]
+            qs = urllib.parse.urlencode(keep + [("Ids", ",".join(sl))])
+            status, headers, body = self.fetch(f"{prefix}/Users/{uid}/Items?{qs}", send_body=False)
+            if status != 200:
+                return self.passthrough()
+            if want_total:
+                data = json.loads(body)
+                data["TotalRecordCount"] = len(ids)
+                body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+            return self.send(status, headers, body, extra=[("X-Searchfix", "rows")])
+        except Exception as e:   # never break the home screen: let Emby answer
+            log(f"rows  failed ({e!r}) for section {sid}; passing through")
+            return self.passthrough()
+
     def fetch_originals(self, prefix, uid, pairs, ids):
         """Real titles by Id, as this user sees them, in the shape the client asked for."""
         keep = [(k, v) for k, v in pairs
@@ -427,7 +519,8 @@ class Handler(BaseHTTPRequestHandler):
             fz = f"fuzzy={len(FUZZY)}" if FUZZY is not None else "fuzzy=off"
             sl = "searchlog=on" if SEARCHLOG else "searchlog=off"
             tl = f"toplist={len(COPIES)}" if COPIES and COPIES.ready else "toplist=off"
-            return self.send(200, [("Content-Type", "text/plain")], f"ok {people} {fz} {sl} {tl}\n".encode())
+            rs = f"rows=sigma{ROW_SHUFFLE_SIGMA:g}" if ROW_SHUFFLE else "rows=off"
+            return self.send(200, [("Content-Type", "text/plain")], f"ok {people} {fz} {sl} {tl} {rs}\n".encode())
 
         parsed = urllib.parse.urlsplit(self.path)
         pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
@@ -444,7 +537,9 @@ class Handler(BaseHTTPRequestHandler):
         if img:
             return self.handle_hsc_image(*img)
         sec = toplist.section_request(self.command, parsed.path)
-        if sec and COPIES is not None and COPIES.ready:
+        if sec and ROW_SHUFFLE:
+            return self.handle_row_shuffle(*sec, pairs)
+        if sec and TOPLIST_ROW_REWRITE and COPIES is not None and COPIES.ready:
             return self.handle_section(*sec, pairs)
         if ((toplist.item_request(self.command, parsed.path)
              or toplist.playback_request(self.command, parsed.path))
@@ -588,6 +683,8 @@ def main():
     ThreadingHTTPServer.daemon_threads = True
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     log(f"searchfix listening on :{LISTEN_PORT}, upstream {UPSTREAM}, pool {POOL}")
+    log("rows: " + (f"daily jitter on, sigma {ROW_SHUFFLE_SIGMA:g}, day starts {ROW_SHUFFLE_ROLLOVER_HOUR:02d}:00, "
+                    f"sorts {sorted(ROW_SHUFFLE_SORTBYS)}" if ROW_SHUFFLE else "off (ROW_SHUFFLE=0)"))
     srv.serve_forever()
 
 

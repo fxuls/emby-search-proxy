@@ -234,6 +234,7 @@ class ServerTest(unittest.TestCase):
         cm = toplist.CopyMap(os.environ["EMBY_UPSTREAM"], "k", log=lambda m: None)
         cm.build()
         server.COPIES = cm
+        server.TOPLIST_ROW_REWRITE = True   # off by default since 1.8.3; these tests cover the code
         cls.server_mod = server
         cls.fix = serve(server.Handler)
         cls.base = f"http://127.0.0.1:{cls.fix.server_port}"
