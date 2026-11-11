@@ -18,7 +18,7 @@
       # Daily rating jitter on rating-sorted home rows (docs/row-shuffle.md).
       # Off: ROW_SHUFFLE=0. Emby's own order through the same path: ROW_SHUFFLE_SIGMA=0.
       - ROW_SHUFFLE=1
-      - ROW_SHUFFLE_SIGMA=0
+      - ROW_SHUFFLE_SIGMA=0.4
       - ROW_SHUFFLE_ROLLOVER_HOUR=4
     env_file:
       - /home/mc/homelab/emby-search-proxy/.env   # EMBY_API_KEY, not in git
